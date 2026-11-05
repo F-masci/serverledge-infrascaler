@@ -12,28 +12,24 @@ const (
 	WeakPriorSkipInsufficientRealObservations = "insufficient_real_observations"
 )
 
-// UCB1ReferenceAnchorMode selects how donor architecture effects are
-// transferred into target reward space. The zero value preserves the
-// historical additive/difference behavior of existing materialized priors.
+// UCB1ReferenceAnchorMode selects the ratio-based reference anchoring mode.
+// An omitted mode defaults to Ratio.
 type UCB1ReferenceAnchorMode string
 
 const (
-	UCB1AnchorDifference UCB1ReferenceAnchorMode = "difference"
-	UCB1AnchorRatio      UCB1ReferenceAnchorMode = "ratio"
+	UCB1AnchorRatio UCB1ReferenceAnchorMode = "ratio"
 )
 
 // UCB1ReferenceAnchorConfig describes the reference-architecture measurement
 // already collected for a new target during profiling.
 //
-// Both modes use only the target's reference-arm reward and donor observations:
+// When enabled, donor reward means are anchored to the target using Ratio:
 //
-//	difference: mu_prior(a) = mu_T,ref + (mu_D,a - mu_D,ref)
-//	ratio:      mu_prior(a) = mu_T,ref * (mu_D,a / mu_D,ref)
+//	mu_prior(a) = mu_T,ref * (mu_D,a / mu_D,ref)
 //
-// Reward is r = -ln(duration_ms); ratio is deliberately a ratio of mean
-// rewards, NOT of durations or speedups. Mode omitted means difference for
-// backwards compatibility. The ratio mode requires a non-zero donor reference
-// mean; unlike difference, its result depends on the reward origin.
+// Reward is r = -ln(duration_ms). The ratio uses mean rewards,
+// not durations or speedups. An omitted mode selects Ratio.
+// The donor reference mean reward must be non-zero.
 type UCB1ReferenceAnchorConfig struct {
 	Enabled                   bool                    `json:"enabled"`
 	ReferenceArm              string                  `json:"reference_arm,omitempty"`
@@ -244,15 +240,9 @@ func BuildWeakMABPriorForTarget(source TransferableMABKnowledge, targetPolicy Ba
 			meanReward := sourceUCB.RealAvgReward
 
 			if anchor != nil {
-				switch anchor.mode {
-				case UCB1AnchorDifference:
-					meanReward = anchor.targetReferenceMeanReward +
-						(sourceUCB.RealAvgReward - anchor.donorReferenceMeanReward)
-				case UCB1AnchorRatio:
-					meanReward = anchor.targetReferenceMeanReward *
-						(sourceUCB.RealAvgReward / anchor.donorReferenceMeanReward)
-				}
+				meanReward = anchor.targetReferenceMeanReward * (sourceUCB.RealAvgReward / anchor.donorReferenceMeanReward)
 			}
+
 			if !isFiniteNumber(meanReward) {
 				return WeakMABPrior{}, fmt.Errorf("non-finite transferred mean reward for arm %q", arm)
 			}
@@ -326,12 +316,10 @@ func validateDecoupledExplorationWeight(weight float64) error {
 
 func resolvedUCB1AnchorMode(mode UCB1ReferenceAnchorMode) (UCB1ReferenceAnchorMode, error) {
 	switch mode {
-	case "", UCB1AnchorDifference:
-		return UCB1AnchorDifference, nil
-	case UCB1AnchorRatio:
+	case "", UCB1AnchorRatio:
 		return UCB1AnchorRatio, nil
 	default:
-		return "", fmt.Errorf("unsupported UCB1 reference anchor mode %q", mode)
+		return "", fmt.Errorf("unsupported UCB1 reference anchor mode %q: only ratio is supported", mode)
 	}
 }
 
