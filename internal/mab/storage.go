@@ -88,25 +88,17 @@ func (s *DecisionStorage) SetExecutionPlan(reqID string, executionArm string, fa
 	return decision, true
 }
 
-func (s *DecisionStorage) RetrieveAndDelete(
-	reqID string,
-) (DecisionRecord, bool) {
+func (s *DecisionStorage) RetrieveAndDelete(reqID string) (DecisionRecord, bool) {
 	if reqID == "" {
 		return DecisionRecord{}, false
 	}
 
-	value, ok :=
-		s.data.LoadAndDelete(
-			reqID,
-		)
-
+	value, ok := s.data.LoadAndDelete(reqID)
 	if !ok {
 		return DecisionRecord{}, false
 	}
 
-	decision, ok :=
-		value.(DecisionRecord)
-
+	decision, ok := value.(DecisionRecord)
 	if !ok {
 		return DecisionRecord{}, false
 	}
@@ -116,14 +108,8 @@ func (s *DecisionStorage) RetrieveAndDelete(
 
 func (s *DecisionStorage) Reset() {
 	s.data.Range(
-		func(
-			key any,
-			_ any,
-		) bool {
-			s.data.Delete(
-				key,
-			)
-
+		func(key any, _ any) bool {
+			s.data.Delete(key)
 			return true
 		},
 	)
@@ -145,9 +131,7 @@ type DecisionStats struct {
 
 var GlobalDecisionStats = &DecisionStats{}
 
-func (s *DecisionStats) RecordResolved(
-	fallback bool,
-) DecisionStatsSnapshot {
+func (s *DecisionStats) RecordResolved(fallback bool) DecisionStatsSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -187,10 +171,8 @@ func (s *DecisionStats) Reset() {
 
 func (s *DecisionStats) snapshotLocked() DecisionStatsSnapshot {
 	return DecisionStatsSnapshot{
-		DirectExecutions: s.directExecutions,
-
+		DirectExecutions:   s.directExecutions,
 		FallbackExecutions: s.fallbackExecutions,
-
 		CancelledDecisions: s.cancelledDecisions,
 	}
 }
@@ -198,19 +180,12 @@ func (s *DecisionStats) snapshotLocked() DecisionStatsSnapshot {
 // ResolveDecisionWithoutFeedback closes the selected arm without updating any
 // learned reward. It is used for missing candidates, proxy failures and
 // malformed or unusable responses.
-func ResolveDecisionWithoutFeedback(
-	decision DecisionRecord,
-	reason string,
-) bool {
+func ResolveDecisionWithoutFeedback(decision DecisionRecord, reason string) bool {
 
 	resolved := false
 
 	if GlobalBanditManager != nil {
-		bandit :=
-			GlobalBanditManager.
-				GetBandit(
-					decision.FunctionName,
-				)
+		bandit := GlobalBanditManager.GetBandit(decision.FunctionName)
 
 		bandit.ResolveSelection(
 			decision.SelectedArm,
@@ -226,69 +201,41 @@ func ResolveDecisionWithoutFeedback(
 		resolved = true
 	}
 
-	stats :=
-		GlobalDecisionStats.
-			RecordCancelled()
-
-	logMABDecisionCancelled(
-		decision,
-		reason,
-		stats,
-		GlobalBanditManager != nil,
-	)
+	stats := GlobalDecisionStats.RecordCancelled()
+	logMABDecisionCancelled(decision, reason, stats, GlobalBanditManager != nil)
 
 	return resolved
 }
 
 // ResolveDecisionWithFeedback closes the selected arm and applies the real
 // feedback to the arm reported by the execution node.
-func ResolveDecisionWithFeedback(
-	decision DecisionRecord,
-	observedExecutionArm string,
-	feedback ExecutionFeedback,
-) bool {
+func ResolveDecisionWithFeedback(decision DecisionRecord, observedExecutionArm string, feedback ExecutionFeedback) bool {
 	if observedExecutionArm == "" {
 		return false
 	}
 
-	if decision.ExecutionArm != "" &&
-		decision.ExecutionArm !=
-			observedExecutionArm {
-
-		logMABExecutionArmMismatch(
-			decision,
-			observedExecutionArm,
-		)
+	if decision.ExecutionArm != "" && decision.ExecutionArm != observedExecutionArm {
+		logMABExecutionArmMismatch(decision, observedExecutionArm)
 	}
 
 	// The response header is authoritative because it identifies the node/ring
 	// that actually executed the invocation.
-	decision.ExecutionArm =
-		observedExecutionArm
-
-	decision.Fallback =
-		decision.SelectedArm !=
-			decision.ExecutionArm
+	decision.ExecutionArm = observedExecutionArm
+	decision.Fallback = decision.SelectedArm != decision.ExecutionArm
 
 	if decision.Fallback {
 		if decision.FallbackReason == "" {
-			decision.FallbackReason =
-				FallbackReasonObservedExecutionDiffers
+			decision.FallbackReason = FallbackReasonObservedExecutionDiffers
 		}
 	} else {
-		decision.FallbackReason =
-			""
+		decision.FallbackReason = ""
 	}
 
 	if GlobalBanditManager == nil {
 		return false
 	}
 
-	bandit :=
-		GlobalBanditManager.
-			GetBandit(
-				decision.FunctionName,
-			)
+	bandit := GlobalBanditManager.GetBandit(decision.FunctionName)
 
 	bandit.ResolveSelection(
 		decision.SelectedArm,
@@ -301,46 +248,21 @@ func ResolveDecisionWithFeedback(
 		),
 	)
 
-	logLinUCBRequestObservation(
-		bandit.GetType(),
-		decision,
-		feedback,
-	)
-
-	stats :=
-		GlobalDecisionStats.
-			RecordResolved(
-				decision.Fallback,
-			)
-
-	logMABDecisionResolved(
-		decision,
-		stats,
-	)
+	logLinUCBRequestObservation(bandit.GetType(), decision, feedback)
+	stats := GlobalDecisionStats.RecordResolved(decision.Fallback)
+	logMABDecisionResolved(decision, stats)
 
 	return true
 }
 
 // CancelDecision removes a stored decision and closes its pending selection
 // without applying a reward. Calling it repeatedly for the same request is safe.
-func CancelDecision(
-	reqID string,
-	reason string,
-) bool {
-	decision, ok :=
-		GlobalDecisionStorage.
-			RetrieveAndDelete(
-				reqID,
-			)
-
+func CancelDecision(reqID string, reason string) bool {
+	decision, ok := GlobalDecisionStorage.RetrieveAndDelete(reqID)
 	if !ok {
 		return false
 	}
 
-	ResolveDecisionWithoutFeedback(
-		decision,
-		reason,
-	)
-
+	ResolveDecisionWithoutFeedback(decision, reason)
 	return true
 }

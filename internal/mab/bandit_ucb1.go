@@ -104,10 +104,7 @@ func (b *UCB1Bandit) SelectArmFrom(ctx *Context, allowedArms []string) string {
 	// Classic UCB1 is intentionally context-free.
 	_ = ctx
 
-	candidateArms := filterAllowedArms(
-		b.Arms,
-		allowedArms,
-	)
+	candidateArms := filterAllowedArms(b.Arms, allowedArms)
 
 	if len(candidateArms) == 0 {
 		log.Printf(

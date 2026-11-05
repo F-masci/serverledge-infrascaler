@@ -51,44 +51,19 @@ func ProfilingFeatureVectorCSVHeader() []string {
 // are. Samples not eligible for resource clustering are ignored; an eligible
 // sample that cannot be converted is an error, because it indicates an
 // inconsistency in the dataset.
-func BuildProfilingFeatureVectors(
-	samples []InvocationSample,
-) ([]ProfilingFeatureVector, error) {
-	vectors :=
-		make(
-			[]ProfilingFeatureVector,
-			0,
-			len(samples),
-		)
-
+func BuildProfilingFeatureVectors(samples []InvocationSample) ([]ProfilingFeatureVector, error) {
+	vectors := make([]ProfilingFeatureVector, 0, len(samples))
 	for index, sample := range samples {
 
-		if !sample.
-			Eligibility.
-			ResourceClustering {
-
+		if !sample.Eligibility.ResourceClustering {
 			continue
 		}
 
-		vector, err :=
-			BuildProfilingFeatureVector(
-				sample,
-			)
-
+		vector, err := BuildProfilingFeatureVector(sample)
 		if err != nil {
-			return nil,
-				fmt.Errorf(
-					"failed to build feature vector from eligible sample at index %d: %w",
-					index,
-					err,
-				)
+			return nil, fmt.Errorf("failed to build feature vector from eligible sample at index %d: %w", index, err)
 		}
-
-		vectors =
-			append(
-				vectors,
-				vector,
-			)
+		vectors = append(vectors, vector)
 	}
 
 	return vectors, nil
@@ -103,146 +78,61 @@ func BuildProfilingFeatureVectors(
 // per function-configuration.
 //
 // Rows are sorted deterministically and the file is rewritten atomically.
-func ExportProfilingFeatureVectorsCSV(
-	path string,
-	experimentID string,
-	vectors []ProfilingFeatureVector,
-) error {
-	path =
-		strings.TrimSpace(
-			path,
-		)
-
+func ExportProfilingFeatureVectorsCSV(path string, experimentID string, vectors []ProfilingFeatureVector) error {
+	path = strings.TrimSpace(path)
 	if path == "" {
-		return fmt.Errorf(
-			"feature vector CSV output path cannot be empty",
-		)
+		return fmt.Errorf("feature vector CSV output path cannot be empty")
 	}
 
-	experimentID =
-		strings.TrimSpace(
-			experimentID,
-		)
-
+	experimentID = strings.TrimSpace(experimentID)
 	if experimentID == "" {
-		return fmt.Errorf(
-			"feature vector CSV experiment id cannot be empty",
-		)
+		return fmt.Errorf("feature vector CSV experiment id cannot be empty")
 	}
 
 	if len(vectors) == 0 {
-		return fmt.Errorf(
-			"cannot export an empty feature vector dataset",
-		)
+		return fmt.Errorf("cannot export an empty feature vector dataset")
 	}
 
-	seenRequestIDs :=
-		make(
-			map[string]struct{},
-			len(vectors),
-		)
-
+	seenRequestIDs := make(map[string]struct{}, len(vectors))
 	for index, vector := range vectors {
-
-		if err :=
-			validateFeatureVectorForCSV(
-				vector,
-			); err != nil {
-
-			return fmt.Errorf(
-				"invalid feature vector at index %d: %w",
-				index,
-				err,
-			)
+		if err := validateFeatureVectorForCSV(vector); err != nil {
+			return fmt.Errorf("invalid feature vector at index %d: %w", index, err)
 		}
 
-		if _, duplicate :=
-			seenRequestIDs[vector.RequestID]; duplicate {
-
-			return fmt.Errorf(
-				"duplicate request id %q in feature vector dataset",
-				vector.RequestID,
-			)
+		if _, duplicate := seenRequestIDs[vector.RequestID]; duplicate {
+			return fmt.Errorf("duplicate request id %q in feature vector dataset", vector.RequestID)
 		}
 
-		seenRequestIDs[vector.RequestID] =
-			struct{}{}
+		seenRequestIDs[vector.RequestID] = struct{}{}
 	}
 
-	ordered :=
-		make(
-			[]ProfilingFeatureVector,
-			len(vectors),
-		)
+	ordered := make([]ProfilingFeatureVector, len(vectors))
 
-	copy(
-		ordered,
-		vectors,
-	)
+	copy(ordered, vectors)
 
 	// Deterministic order: function, machine tag, configuration, then request
 	// id as the final tie-breaker, which is unique by the check above.
-	sort.SliceStable(
-		ordered,
-		func(
-			i int,
-			j int,
-		) bool {
-			if ordered[i].FunctionName !=
-				ordered[j].FunctionName {
+	sort.SliceStable(ordered, func(i int, j int) bool {
+		if ordered[i].FunctionName != ordered[j].FunctionName {
+			return ordered[i].FunctionName < ordered[j].FunctionName
+		}
 
-				return ordered[i].FunctionName <
-					ordered[j].FunctionName
-			}
+		if ordered[i].MachineTag != ordered[j].MachineTag {
+			return ordered[i].MachineTag < ordered[j].MachineTag
+		}
 
-			if ordered[i].MachineTag !=
-				ordered[j].MachineTag {
+		if ordered[i].FunctionConfiguration.ConfiguredCPUs != ordered[j].FunctionConfiguration.ConfiguredCPUs {
+			return ordered[i].FunctionConfiguration.ConfiguredCPUs < ordered[j].FunctionConfiguration.ConfiguredCPUs
+		}
 
-				return ordered[i].MachineTag <
-					ordered[j].MachineTag
-			}
+		if ordered[i].FunctionConfiguration.ConfiguredMemoryMB != ordered[j].FunctionConfiguration.ConfiguredMemoryMB {
+			return ordered[i].FunctionConfiguration.ConfiguredMemoryMB < ordered[j].FunctionConfiguration.ConfiguredMemoryMB
+		}
 
-			if ordered[i].
-				FunctionConfiguration.
-				ConfiguredCPUs !=
-				ordered[j].
-					FunctionConfiguration.
-					ConfiguredCPUs {
+		return ordered[i].RequestID < ordered[j].RequestID
+	})
 
-				return ordered[i].
-					FunctionConfiguration.
-					ConfiguredCPUs <
-					ordered[j].
-						FunctionConfiguration.
-						ConfiguredCPUs
-			}
-
-			if ordered[i].
-				FunctionConfiguration.
-				ConfiguredMemoryMB !=
-				ordered[j].
-					FunctionConfiguration.
-					ConfiguredMemoryMB {
-
-				return ordered[i].
-					FunctionConfiguration.
-					ConfiguredMemoryMB <
-					ordered[j].
-						FunctionConfiguration.
-						ConfiguredMemoryMB
-			}
-
-			return ordered[i].RequestID <
-				ordered[j].RequestID
-		},
-	)
-
-	tempFile, tempPath, err :=
-		createAtomicFile(
-			path,
-			".profiling-feature-vectors-*.csv.tmp",
-			"feature vector CSV",
-		)
+	tempFile, tempPath, err := createAtomicFile(path, ".profiling-feature-vectors-*.csv.tmp", "feature vector CSV")
 
 	if err != nil {
 		return err
@@ -252,181 +142,72 @@ func ExportProfilingFeatureVectorsCSV(
 
 	defer func() {
 		if cleanupTemp {
-			_ =
-				os.Remove(
-					tempPath,
-				)
+			_ = os.Remove(tempPath)
 		}
 	}()
 
-	writer :=
-		csv.NewWriter(
-			tempFile,
-		)
+	writer := csv.NewWriter(tempFile)
 
-	if err :=
-		writer.Write(
-			ProfilingFeatureVectorCSVHeader(),
-		); err != nil {
-
-		_ =
-			tempFile.Close()
-
-		return fmt.Errorf(
-			"failed to write feature vector CSV header: %w",
-			err,
-		)
+	if err := writer.Write(ProfilingFeatureVectorCSVHeader()); err != nil {
+		_ = tempFile.Close()
+		return fmt.Errorf("failed to write feature vector CSV header: %w", err)
 	}
 
 	for index, vector := range ordered {
-
-		if err :=
-			writer.Write(
-				profilingFeatureVectorCSVRecord(
-					experimentID,
-					vector,
-				),
-			); err != nil {
-
-			_ =
-				tempFile.Close()
-
-			return fmt.Errorf(
-				"failed to write feature vector at index %d: %w",
-				index,
-				err,
-			)
+		if err := writer.Write(profilingFeatureVectorCSVRecord(experimentID, vector)); err != nil {
+			_ = tempFile.Close()
+			return fmt.Errorf("failed to write feature vector at index %d: %w", index, err)
 		}
 	}
 
 	writer.Flush()
-
-	if err :=
-		writer.Error(); err != nil {
-
-		_ =
-			tempFile.Close()
-
-		return fmt.Errorf(
-			"failed to flush feature vector CSV: %w",
-			err,
-		)
+	if err := writer.Error(); err != nil {
+		_ = tempFile.Close()
+		return fmt.Errorf("failed to flush feature vector CSV: %w", err)
 	}
 
-	if err :=
-		finalizeAtomicFile(
-			tempFile,
-			tempPath,
-			path,
-			"feature vector CSV",
-		); err != nil {
+	if err := finalizeAtomicFile(tempFile, tempPath, path, "feature vector CSV"); err != nil {
 
 		return err
 	}
-
 	cleanupTemp = false
-
 	return nil
 }
 
-func profilingFeatureVectorCSVRecord(
-	experimentID string,
-	vector ProfilingFeatureVector,
-) []string {
-	record :=
-		[]string{
-			strconv.Itoa(
-				ProfilingFeatureVectorCSVSchemaVersion,
-			),
-
-			experimentID,
-
-			strconv.Itoa(
-				vector.SchemaVersion,
-			),
-
-			vector.RequestID,
-
-			vector.FunctionName,
-
-			vector.MachineTag,
-
-			strconv.FormatFloat(
-				vector.
-					FunctionConfiguration.
-					ConfiguredCPUs,
-				'g',
-				-1,
-				64,
-			),
-
-			strconv.FormatInt(
-				vector.
-					FunctionConfiguration.
-					ConfiguredMemoryMB,
-				10,
-			),
-		}
+func profilingFeatureVectorCSVRecord(experimentID string, vector ProfilingFeatureVector) []string {
+	record := []string{strconv.Itoa(ProfilingFeatureVectorCSVSchemaVersion),
+		experimentID,
+		strconv.Itoa(vector.SchemaVersion),
+		vector.RequestID,
+		vector.FunctionName,
+		vector.MachineTag,
+		strconv.FormatFloat(vector.FunctionConfiguration.ConfiguredCPUs, 'g', -1, 64),
+		strconv.FormatInt(vector.FunctionConfiguration.ConfiguredMemoryMB, 10),
+	}
 
 	for _, value := range vector.Features.Values() {
-
-		record =
-			append(
-				record,
-				strconv.FormatFloat(
-					value,
-					'g',
-					-1,
-					64,
-				),
-			)
+		record = append(record, strconv.FormatFloat(value, 'g', -1, 64))
 	}
 
 	return record
 }
 
-func validateFeatureVectorForCSV(
-	vector ProfilingFeatureVector,
-) error {
-	if vector.SchemaVersion !=
-		ProfilingFeatureVectorSchemaVersion {
-
-		return fmt.Errorf(
-			"unsupported feature vector schema version %d: expected %d",
-			vector.SchemaVersion,
-			ProfilingFeatureVectorSchemaVersion,
-		)
+func validateFeatureVectorForCSV(vector ProfilingFeatureVector) error {
+	if vector.SchemaVersion != ProfilingFeatureVectorSchemaVersion {
+		return fmt.Errorf("unsupported feature vector schema version %d: expected %d", vector.SchemaVersion, ProfilingFeatureVectorSchemaVersion)
 	}
 
-	if strings.TrimSpace(
-		vector.RequestID,
-	) == "" {
-
-		return fmt.Errorf(
-			"request id cannot be empty",
-		)
+	if strings.TrimSpace(vector.RequestID) == "" {
+		return fmt.Errorf("request id cannot be empty")
 	}
 
-	if strings.TrimSpace(
-		vector.FunctionName,
-	) == "" {
-
-		return fmt.Errorf(
-			"function name cannot be empty",
-		)
+	if strings.TrimSpace(vector.FunctionName) == "" {
+		return fmt.Errorf("function name cannot be empty")
 	}
 
-	if strings.TrimSpace(
-		vector.MachineTag,
-	) == "" {
-
-		return fmt.Errorf(
-			"machine tag cannot be empty",
-		)
+	if strings.TrimSpace(vector.MachineTag) == "" {
+		return fmt.Errorf("machine tag cannot be empty")
 	}
 
-	return validateAggregatedFeaturesForCSV(
-		"sample",
-		vector.Features,
-	)
+	return validateAggregatedFeaturesForCSV("sample", vector.Features)
 }

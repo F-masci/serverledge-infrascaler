@@ -138,8 +138,8 @@ func BuildColdStartProfilesByGroup(samples []InvocationSample, samplesPerProfile
 			selectedSamples = append(selectedSamples, candidate.Sample)
 		}
 
-		// Mirrors the warm path: raw InvocationSample →
-		// BuildColdStartProfileFromSamples → AggregateColdStartSamples →
+		// Mirrors the warm path: raw InvocationSample to
+		// BuildColdStartProfileFromSamples to AggregateColdStartSamples to
 		// ColdStartProfile. Going through the same entry point as the warm
 		// builder keeps the two pipelines readable side by side.
 		profile, err := BuildColdStartProfileFromSamples(selectedSamples)
@@ -230,8 +230,7 @@ func LoadColdStartProfilesJSONL(path string) ([]ColdStartProfile, error) {
 
 		profiles = append(profiles, profile)
 		return nil
-	},
-	); err != nil {
+	}); err != nil {
 		return nil, err
 	}
 

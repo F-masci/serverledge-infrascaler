@@ -63,10 +63,7 @@ var stoppedMemoryMonitors sync.Map
 //
 // Statistics are read in a goroutine
 // No external process is created
-func startContainerMemoryMonitor(
-	id container.ContainerID,
-	functionName string,
-) {
+func startContainerMemoryMonitor(id container.ContainerID, functionName string) {
 	interval := memoryMonitorInterval()
 
 	if interval <= 0 || id == "" || functionName == "" {
@@ -82,17 +79,9 @@ func startContainerMemoryMonitor(
 		done:         make(chan struct{}),
 	}
 
-	_, alreadyPresent := runningMemoryMonitors.LoadOrStore(
-		id,
-		monitor,
-	)
-
+	_, alreadyPresent := runningMemoryMonitors.LoadOrStore(id, monitor)
 	if alreadyPresent {
-		log.Printf(
-			"%s event=duplicate_start container_id=%q",
-			memoryMonitorPrefix,
-			id,
-		)
+		log.Printf("%s event=duplicate_start container_id=%q", memoryMonitorPrefix, id)
 		return
 	}
 

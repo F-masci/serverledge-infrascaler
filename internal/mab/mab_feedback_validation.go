@@ -58,32 +58,15 @@ func logInvalidObservabilityMetrics(policy string, functionName string, arm stri
 			continue
 		}
 
-		logMABInvalidObservabilityMetric(
-			policy,
-			functionName,
-			arm,
-			metric.name,
-			metric.value,
-		)
+		logMABInvalidObservabilityMetric(policy, functionName, arm, metric.name, metric.value)
 	}
 }
 
 func recordInvalidExecutionFeedback(policy string, functionName string, arm string, reason string, feedback ExecutionFeedback) {
 
 	GlobalColdStartStats.RecordInvalid(functionName, arm)
-	logMABInvalidExecutionFeedback(
-		policy,
-		functionName,
-		arm,
-		reason,
-		feedback,
-	)
-
-	logCurrentColdStartStats(
-		policy,
-		functionName,
-		arm,
-	)
+	logMABInvalidExecutionFeedback(policy, functionName, arm, reason, feedback)
+	logCurrentColdStartStats(policy, functionName, arm)
 }
 
 func recordAcceptedExecutionFeedback(policy string, functionName string, arm string, feedback ExecutionFeedback) {
@@ -91,18 +74,9 @@ func recordAcceptedExecutionFeedback(policy string, functionName string, arm str
 		GlobalColdStartStats.RecordColdAccepted(functionName, arm)
 	}
 
-	logCurrentColdStartStats(
-		policy,
-		functionName,
-		arm,
-	)
+	logCurrentColdStartStats(policy, functionName, arm)
 }
 
 func logCurrentColdStartStats(policy string, functionName string, arm string) {
-	logMABColdStartStats(
-		policy,
-		functionName,
-		arm,
-		GlobalColdStartStats.Snapshot(functionName, arm),
-	)
+	logMABColdStartStats(policy, functionName, arm, GlobalColdStartStats.Snapshot(functionName, arm))
 }

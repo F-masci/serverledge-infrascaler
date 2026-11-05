@@ -31,115 +31,47 @@ func RegisterTransferControlRoutes(e *echo.Echo) {
 		return
 	}
 
-	if !config.GetBool(
-		config.MAB_TRANSFER_CONTROL_ENABLED,
-		false,
-	) {
-		log.Printf(
-			"[LB][MAB] transfer control API disabled (%s=false)\n",
-			config.MAB_TRANSFER_CONTROL_ENABLED,
-		)
-
+	if !config.GetBool(config.MAB_TRANSFER_CONTROL_ENABLED, false) {
+		log.Printf("[LB][MAB] transfer control API disabled (%s=false)\n", config.MAB_TRANSFER_CONTROL_ENABLED)
 		return
 	}
 
-	e.POST(
-		TransferControlInitializePath,
-		initializeTargetFromSelection,
-	)
-
+	e.POST(TransferControlInitializePath, initializeTargetFromSelection)
 	registerMaterializedTransferControlRoute(e)
-
-	log.Printf(
-		"[LB][MAB] transfer control API enabled: POST %s\n",
-		TransferControlInitializePath,
-	)
+	log.Printf("[LB][MAB] transfer control API enabled: POST %s\n", TransferControlInitializePath)
 }
 
 func transferControlProxySkipper(c echo.Context) bool {
 	if c == nil {
 		return false
 	}
-
-	return strings.HasPrefix(
-		c.Request().URL.Path,
-		"/mab/transfer/",
-	)
+	return strings.HasPrefix(c.Request().URL.Path, "/mab/transfer/")
 }
 
 func initializeTargetFromSelection(c echo.Context) error {
-	if !strings.EqualFold(
-		strings.TrimSpace(
-			config.GetString(
-				config.LB_MODE,
-				RR,
-			),
-		),
-		MAB,
-	) {
-		return c.JSON(
-			http.StatusConflict,
-			echo.Map{
-				"error": "transfer initialization requires lb.mode=MAB",
-			},
-		)
+	if !strings.EqualFold(strings.TrimSpace(config.GetString(config.LB_MODE, RR)), MAB) {
+		return c.JSON(http.StatusConflict, echo.Map{"error": "transfer initialization requires lb.mode=MAB"})
 	}
 
 	if mab.GlobalBanditManager == nil {
-		return c.JSON(
-			http.StatusServiceUnavailable,
-			echo.Map{
-				"error": "MAB manager is not initialized",
-			},
-		)
+		return c.JSON(http.StatusServiceUnavailable, echo.Map{"error": "MAB manager is not initialized"})
 	}
 
 	var request transferControlInitializeRequest
 
-	decoder :=
-		json.NewDecoder(
-			c.Request().Body,
-		)
-
-	if err :=
-		decoder.Decode(
-			&request,
-		); err != nil {
-
-		return c.JSON(
-			http.StatusBadRequest,
-			echo.Map{
-				"error": "invalid transfer control request: " + err.Error(),
-			},
-		)
+	decoder := json.NewDecoder(c.Request().Body)
+	if err := decoder.Decode(&request); err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{"error": "invalid transfer control request: " + err.Error()})
 	}
 
-	request.TargetFunctionName =
-		strings.TrimSpace(
-			request.TargetFunctionName,
-		)
-
+	request.TargetFunctionName = strings.TrimSpace(request.TargetFunctionName)
 	if request.TargetFunctionName == "" {
-		return c.JSON(
-			http.StatusBadRequest,
-			echo.Map{
-				"error": "target_function_name cannot be empty",
-			},
-		)
+		return c.JSON(http.StatusBadRequest, echo.Map{"error": "target_function_name cannot be empty"})
 	}
 
-	artifact, err :=
-		mab.DecodeDonorSelectionArtifact(
-			request.SelectionArtifact,
-		)
-
+	artifact, err := mab.DecodeDonorSelectionArtifact(request.SelectionArtifact)
 	if err != nil {
-		return c.JSON(
-			http.StatusBadRequest,
-			echo.Map{
-				"error": err.Error(),
-			},
-		)
+		return c.JSON(http.StatusBadRequest, echo.Map{"error": err.Error()})
 	}
 
 	result, err :=
@@ -151,16 +83,8 @@ func initializeTargetFromSelection(c echo.Context) error {
 			)
 
 	if err != nil {
-		return c.JSON(
-			http.StatusConflict,
-			echo.Map{
-				"error": err.Error(),
-			},
-		)
+		return c.JSON(http.StatusConflict, echo.Map{"error": err.Error()})
 	}
 
-	return c.JSON(
-		http.StatusOK,
-		result,
-	)
+	return c.JSON(http.StatusOK, result)
 }

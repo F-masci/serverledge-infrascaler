@@ -133,63 +133,29 @@ type NodeResourceProfile struct {
 func getCPUClockTicksPerSecond() (uint64, error) {
 	cpuClockTicksOnce.Do(
 		func() {
-			output, err :=
-				exec.Command(
-					"getconf",
-					"CLK_TCK",
-				).Output()
-
+			output, err := exec.Command("getconf", "CLK_TCK").Output()
 			if err != nil {
-				cpuClockTicksErr =
-					fmt.Errorf(
-						"getconf CLK_TCK failed: %w",
-						err,
-					)
-
+				cpuClockTicksErr = fmt.Errorf("getconf CLK_TCK failed: %w", err)
 				return
 			}
 
-			value :=
-				strings.TrimSpace(
-					string(
-						output,
-					),
-				)
-
-			parsed, err :=
-				strconv.ParseUint(
-					value,
-					10,
-					64,
-				)
-
+			value := strings.TrimSpace(string(output))
+			parsed, err := strconv.ParseUint(value, 10, 64)
 			if err != nil {
-				cpuClockTicksErr =
-					fmt.Errorf(
-						"invalid getconf CLK_TCK value %q: %w",
-						value,
-						err,
-					)
-
+				cpuClockTicksErr = fmt.Errorf("invalid getconf CLK_TCK value %q: %w", value, err)
 				return
 			}
 
 			if parsed == 0 {
-				cpuClockTicksErr =
-					errors.New(
-						"getconf CLK_TCK returned zero",
-					)
-
+				cpuClockTicksErr = errors.New("getconf CLK_TCK returned zero")
 				return
 			}
 
-			cpuClockTicksPerSecond =
-				parsed
+			cpuClockTicksPerSecond = parsed
 		},
 	)
 
-	return cpuClockTicksPerSecond,
-		cpuClockTicksErr
+	return cpuClockTicksPerSecond, cpuClockTicksErr
 }
 
 // ReadNodeResourceSnapshot reads all supported node-scoped procfs sources.
@@ -614,14 +580,7 @@ func populateNodeCPUProfile(profile *NodeResourceProfile, before NodeCPUStatSnap
 
 	if clockErr != nil {
 		profile.CPUClockTicksAvailable = false
-		profile.Errors =
-			append(
-				profile.Errors,
-				fmt.Sprintf(
-					"cpu_clock_ticks_unavailable: %v",
-					clockErr,
-				),
-			)
+		profile.Errors = append(profile.Errors, fmt.Sprintf("cpu_clock_ticks_unavailable: %v", clockErr))
 	} else {
 		profile.CPUClockTicksAvailable = true
 		profile.CPUClockTicksPerSecond = clockTicksPerSecond

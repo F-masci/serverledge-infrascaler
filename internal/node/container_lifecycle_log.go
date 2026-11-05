@@ -23,11 +23,7 @@ const containerLifecycleLogPrefix = "[CONTAINER_LIFECYCLE]"
 // When disabled, the lifecycle helpers preserve the legacy behaviour and do
 // not emit additional log lines.
 func containerLifecycleLoggingEnabled() bool {
-	value := strings.ToLower(
-		strings.TrimSpace(
-			os.Getenv(containerLifecycleLogEnv),
-		),
-	)
+	value := strings.ToLower(strings.TrimSpace(os.Getenv(containerLifecycleLogEnv)))
 
 	switch value {
 	case "1", "true", "yes", "on":
@@ -41,11 +37,7 @@ func containerLifecycleLoggingEnabled() bool {
 //
 // startAsIdle distinguishes containers created explicitly for the warm pool
 // (prewarm) from containers created on demand by a cold-start request.
-func logContainerCreated(
-	cont *container.Container,
-	fun *function.Function,
-	startAsIdle bool,
-) {
+func logContainerCreated(cont *container.Container, fun *function.Function, startAsIdle bool) {
 	if cont == nil || fun == nil {
 		return
 	}
@@ -99,11 +91,7 @@ func logContainerCreated(
 // With logging enabled, the function reads the configured container memory
 // before destruction and emits the destruction event only after a successful
 // destroy.
-func destroyContainerWithLifecycle(
-	id container.ContainerID,
-	functionName string,
-	reason string,
-) error {
+func destroyContainerWithLifecycle(id container.ContainerID, functionName string, reason string) error {
 	if !containerLifecycleLoggingEnabled() {
 		stopContainerMemoryMonitor(id)
 

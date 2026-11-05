@@ -12,8 +12,7 @@ import (
 
 const dockerStatsTimeout = 2 * time.Second
 
-// GetResourceSnapshot reads one non-streaming Docker statistics sample for a
-// running container.
+// GetResourceSnapshot reads one non-streaming Docker statistics sample for a running container.
 func (cf *DockerFactory) GetResourceSnapshot(contID ContainerID) (profiling.ResourceSnapshot, error) {
 
 	ctx, cancel := context.WithTimeout(cf.ctx, dockerStatsTimeout)
@@ -40,40 +39,19 @@ func (cf *DockerFactory) GetResourceSnapshot(contID ContainerID) (profiling.Reso
 // The new counters are not used to modify MAB decisions.
 func resourceSnapshotFromDockerStats(osType string, stats dockercontainer.StatsResponse) profiling.ResourceSnapshot {
 
-	pageFaults, pageFaultsAvailable := dockerMemoryStat(
-		stats.MemoryStats.Stats,
-		"total_pgfault",
-		"pgfault",
-	)
+	pageFaults, pageFaultsAvailable := dockerMemoryStat(stats.MemoryStats.Stats, "total_pgfault", "pgfault")
 
 	// Anonymous memory: compatibility with cgroup keys v1/v2
-	anon, hasAnon := dockerMemoryStat(
-		stats.MemoryStats.Stats,
-		"anon",
-		"total_rss",
-		"rss",
-	)
+	anon, hasAnon := dockerMemoryStat(stats.MemoryStats.Stats, "anon", "total_rss", "rss")
 
 	// Memory associated with files and the cache
-	file, hasFile := dockerMemoryStat(
-		stats.MemoryStats.Stats,
-		"file",
-		"total_cache",
-		"cache",
-	)
+	file, hasFile := dockerMemoryStat(stats.MemoryStats.Stats, "file", "total_cache", "cache")
 
 	// Kernel memory, where available
-	kernel, hasKernel := dockerMemoryStat(
-		stats.MemoryStats.Stats,
-		"kernel",
-	)
+	kernel, hasKernel := dockerMemoryStat(stats.MemoryStats.Stats, "kernel")
 
 	// Cache inactive
-	inactiveFile, hasInactiveFile := dockerMemoryStat(
-		stats.MemoryStats.Stats,
-		"inactive_file",
-		"total_inactive_file",
-	)
+	inactiveFile, hasInactiveFile := dockerMemoryStat(stats.MemoryStats.Stats, "inactive_file", "total_inactive_file")
 
 	return profiling.ResourceSnapshot{
 		OSType: osType,

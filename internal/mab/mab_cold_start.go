@@ -73,18 +73,8 @@ func shouldUpdateRewardFromFeedback(policy string, functionName string, arm stri
 	}
 
 	GlobalColdStartStats.RecordColdSkipped(functionName, arm)
-	logMABSkipColdStart(
-		policy,
-		functionName,
-		arm,
-		feedback.DurationMs,
-	)
-
-	logCurrentColdStartStats(
-		policy,
-		functionName,
-		arm,
-	)
+	logMABSkipColdStart(policy, functionName, arm, feedback.DurationMs)
+	logCurrentColdStartStats(policy, functionName, arm)
 
 	return false
 }

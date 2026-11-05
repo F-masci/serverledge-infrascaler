@@ -29,93 +29,40 @@ type transferControlInitializeMaterializedResponse struct {
 	Prior                mab.WeakMABPrior `json:"prior"`
 }
 
-func registerMaterializedTransferControlRoute(
-	e *echo.Echo,
-) {
-	e.POST(
-		TransferControlInitializeMaterializedPath,
-		initializeTargetFromMaterializedPrior,
-	)
+func registerMaterializedTransferControlRoute(e *echo.Echo) {
+	e.POST(TransferControlInitializeMaterializedPath, initializeTargetFromMaterializedPrior)
 
-	log.Printf(
-		"[LB][MAB] materialized transfer control API enabled: POST %s\n",
-		TransferControlInitializeMaterializedPath,
-	)
+	log.Printf("[LB][MAB] materialized transfer control API enabled: POST %s\n", TransferControlInitializeMaterializedPath)
 }
 
-func initializeTargetFromMaterializedPrior(
-	c echo.Context,
-) error {
-
+func initializeTargetFromMaterializedPrior(c echo.Context) error {
 	if !strings.EqualFold(
-		strings.TrimSpace(
-			config.GetString(
-				config.LB_MODE,
-				RR,
-			),
-		),
-		MAB,
-	) {
-		return c.JSON(
-			http.StatusConflict,
-			echo.Map{
-				"error": "materialized transfer initialization requires lb.mode=MAB",
-			},
-		)
+		strings.TrimSpace(config.GetString(config.LB_MODE, RR)), MAB) {
+		return c.JSON(http.StatusConflict, echo.Map{"error": "materialized transfer initialization requires lb.mode=MAB"})
 	}
 
 	if mab.GlobalBanditManager == nil {
-		return c.JSON(
-			http.StatusServiceUnavailable,
-			echo.Map{
-				"error": "MAB manager is not initialized",
-			},
-		)
+		return c.JSON(http.StatusServiceUnavailable, echo.Map{"error": "MAB manager is not initialized"})
 	}
 
 	var request transferControlInitializeMaterializedRequest
+	decoder := json.NewDecoder(c.Request().Body)
+	if err := decoder.Decode(&request); err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{"error": "invalid materialized transfer control request: " + err.Error()})
+	}
 
-	decoder := json.NewDecoder(
-		c.Request().Body,
+	request.TargetFunctionName = strings.TrimSpace(request.TargetFunctionName)
+	if request.TargetFunctionName == "" {
+		return c.JSON(http.StatusBadRequest, echo.Map{"error": "target_function_name cannot be empty"})
+	}
+
+	result, err := mab.GlobalBanditManager.InitializeTargetFromMaterializedPrior(
+		request.TargetFunctionName,
+		request.Prior,
 	)
 
-	if err := decoder.Decode(&request); err != nil {
-		return c.JSON(
-			http.StatusBadRequest,
-			echo.Map{
-				"error": "invalid materialized transfer control request: " + err.Error(),
-			},
-		)
-	}
-
-	request.TargetFunctionName =
-		strings.TrimSpace(
-			request.TargetFunctionName,
-		)
-
-	if request.TargetFunctionName == "" {
-		return c.JSON(
-			http.StatusBadRequest,
-			echo.Map{
-				"error": "target_function_name cannot be empty",
-			},
-		)
-	}
-
-	result, err :=
-		mab.GlobalBanditManager.
-			InitializeTargetFromMaterializedPrior(
-				request.TargetFunctionName,
-				request.Prior,
-			)
-
 	if err != nil {
-		return c.JSON(
-			http.StatusConflict,
-			echo.Map{
-				"error": err.Error(),
-			},
-		)
+		return c.JSON(http.StatusConflict, echo.Map{"error": err.Error()})
 	}
 
 	return c.JSON(

@@ -2,8 +2,8 @@ package mab
 
 // In-flight bookkeeping shared by the two policies.
 //
-// UCB1 and LinUCB keep different per-arm state — ArmStats holds counts and
-// rewards, LinUCBArmState holds the A matrix and the b vector — but they track
+// UCB1 and LinUCB keep different per-arm state, ArmStats holds counts and
+// rewards, LinUCBArmState holds the A matrix and the b vector, but they track
 // pending selections in exactly the same way: an int64 counter on the arm, an
 // int64 total on the policy, and two log events.
 //

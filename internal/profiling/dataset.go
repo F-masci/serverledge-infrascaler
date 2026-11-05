@@ -147,9 +147,9 @@ func LoadInvocationSamplesJSONLFiles(paths []string) ([]InvocationSample, error)
 // A central collection directory can therefore have the form:
 //
 //	data/profiling/raw/<run>/
-//	├── arm-node-01/profiling-samples.jsonl
-//	├── x86-node-01/profiling-samples.jsonl
-//	└── x86-node-02/profiling-samples.jsonl
+//	-  arm-node-01/profiling-samples.jsonl
+//	-  x86-node-01/profiling-samples.jsonl
+//	-  x86-node-02/profiling-samples.jsonl
 func DiscoverInvocationSampleDatasets(root string) ([]string, error) {
 
 	root = strings.TrimSpace(root)
@@ -244,13 +244,12 @@ func BuildFunctionProfilesByGroup(samples []InvocationSample, samplesPerProfile 
 		}
 		result.EligibleSamples++
 
-		key :=
-			functionProfileGroupKey{
-				FunctionName:       sample.FunctionName,
-				MachineTag:         sample.MachineTag,
-				ConfiguredCPUs:     sample.FunctionConfiguration.ConfiguredCPUs,
-				ConfiguredMemoryMB: sample.FunctionConfiguration.ConfiguredMemoryMB,
-			}
+		key := functionProfileGroupKey{
+			FunctionName:       sample.FunctionName,
+			MachineTag:         sample.MachineTag,
+			ConfiguredCPUs:     sample.FunctionConfiguration.ConfiguredCPUs,
+			ConfiguredMemoryMB: sample.FunctionConfiguration.ConfiguredMemoryMB,
+		}
 
 		groups[key] = append(groups[key], timestampedInvocationSample{
 			TimestampMs: sample.TimestampMs,
@@ -324,16 +323,11 @@ func BuildFunctionProfilesByGroup(samples []InvocationSample, samplesPerProfile 
 		}
 
 		// This is the production caller that connects:
-		//
-		// raw InvocationSample
-		//        ↓
-		// BuildFunctionProfileFromSamples
-		//        ↓
-		// BuildProfilingFeatureVector
-		//        ↓
-		// AggregateProfilingFeatureVectors
-		//        ↓
-		// FunctionProfile
+		// - raw InvocationSample
+		// - BuildFunctionProfileFromSamples
+		// - BuildProfilingFeatureVector
+		// - AggregateProfilingFeatureVectors
+		// - FunctionProfile
 		profile, err := BuildFunctionProfileFromSamples(selectedSamples)
 		if err != nil {
 			return FunctionProfileBuildResult{}, fmt.Errorf("failed to aggregate function %q on machine tag %q: %w", key.FunctionName, key.MachineTag, err)

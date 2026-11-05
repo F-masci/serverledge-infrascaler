@@ -66,17 +66,8 @@ func proxyErrorMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 		}()
 
 		defer func() {
-			reqID :=
-				c.Request().
-					Header.
-					Get(
-						"Serverledge-MAB-Request-ID",
-					)
-
-			mab.CancelDecision(
-				reqID,
-				"proxy_completed_without_claimed_feedback",
-			)
+			reqID := c.Request().Header.Get("Serverledge-MAB-Request-ID")
+			mab.CancelDecision(reqID, "proxy_completed_without_claimed_feedback")
 		}()
 
 		// Execute the proxy middleware chain, which internally calls Next() to select

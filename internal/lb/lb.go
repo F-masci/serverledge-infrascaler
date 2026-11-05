@@ -87,38 +87,14 @@ func StartReverseProxy(e *echo.Echo, region string) {
 			if isAware {
 				// The decision record must be retrieved before the goroutine is started.
 				// This ensures that the proxy cleanup cannot delete it in the meantime.
-				decision, hasDecision :=
-					mab.GlobalDecisionStorage.
-						RetrieveAndDelete(
-							reqID,
-						)
+				decision, hasDecision := mab.GlobalDecisionStorage.RetrieveAndDelete(reqID)
 
 				if hasDecision {
-					feedback :=
-						mab.ExecutionFeedback{
-							NodeName: nodeName,
-						}
+					feedback := mab.ExecutionFeedback{NodeName: nodeName}
 
-					go func(
-						data []byte,
-						path string,
-						tag string,
-						decision mab.DecisionRecord,
-						feedback mab.ExecutionFeedback,
-					) {
-						if err :=
-							mab.UpdateBandit(
-								data,
-								path,
-								tag,
-								decision,
-								feedback,
-							); err != nil {
-
-							log.Printf(
-								"Failed to update bandit: %v",
-								err,
-							)
+					go func(data []byte, path string, tag string, decision mab.DecisionRecord, feedback mab.ExecutionFeedback) {
+						if err := mab.UpdateBandit(data, path, tag, decision, feedback); err != nil {
+							log.Printf("Failed to update bandit: %v", err)
 						}
 					}(
 						bodyBytes,

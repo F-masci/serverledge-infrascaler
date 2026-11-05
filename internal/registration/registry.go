@@ -53,23 +53,10 @@ func (r *NodeRegistration) toEtcdKey() (key string) {
 	tag := r.routingTag()
 
 	if r.IsLoadBalancer {
-		return fmt.Sprintf(
-			"%s/%s/%s/%s/%s",
-			registryBaseDirectory,
-			r.Area,
-			registryLoadBalancerDirectory,
-			tag,
-			r.Key,
-		)
+		return fmt.Sprintf("%s/%s/%s/%s/%s", registryBaseDirectory, r.Area, registryLoadBalancerDirectory, tag, r.Key)
 	}
 
-	return fmt.Sprintf(
-		"%s/%s/%s/%s",
-		registryBaseDirectory,
-		r.Area,
-		tag,
-		r.Key,
-	)
+	return fmt.Sprintf("%s/%s/%s/%s", registryBaseDirectory, r.Area, tag, r.Key)
 }
 
 func (r *NodeRegistration) APIUrl() (url string) {
@@ -124,14 +111,7 @@ func registerToEtcd(asLoadBalancer bool) error {
 	node.LocalNode.Arch = arch
 	node.LocalNode.MachineTag = machineTag
 
-	payload := fmt.Sprintf(
-		"%s;%d;%d;%s;%s",
-		registeredLocalIP,
-		apiPort,
-		udpPort,
-		arch,
-		machineTag,
-	)
+	payload := fmt.Sprintf("%s;%d;%d;%s;%s", registeredLocalIP, apiPort, udpPort, arch, machineTag)
 
 	SelfRegistration = &NodeRegistration{
 		NodeID:         node.LocalNode,

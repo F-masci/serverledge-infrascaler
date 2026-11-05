@@ -17,66 +17,44 @@ import "fmt"
 //  3. fresh target runtimes receive exactly that prior with c=0.8 or c=0.
 //
 // The target is published only after successful prior application.
-func (bm *BanditManager) InitializeTargetFromMaterializedPrior(
-	targetFunctionName string,
-	prior WeakMABPrior,
-) (RuntimeTransferResult, error) {
+func (bm *BanditManager) InitializeTargetFromMaterializedPrior(targetFunctionName string, prior WeakMABPrior) (RuntimeTransferResult, error) {
 
 	if bm == nil {
-		return RuntimeTransferResult{},
-			fmt.Errorf("bandit manager cannot be nil")
+		return RuntimeTransferResult{}, fmt.Errorf("bandit manager cannot be nil")
 	}
 
 	if targetFunctionName == "" {
-		return RuntimeTransferResult{},
-			fmt.Errorf("target function name cannot be empty")
+		return RuntimeTransferResult{}, fmt.Errorf("target function name cannot be empty")
 	}
 
 	if prior.DonorFunctionName == "" {
-		return RuntimeTransferResult{},
-			fmt.Errorf("materialized weak prior donor function name cannot be empty")
+		return RuntimeTransferResult{}, fmt.Errorf("materialized weak prior donor function name cannot be empty")
 	}
 
 	if targetFunctionName == prior.DonorFunctionName {
-		return RuntimeTransferResult{},
-			fmt.Errorf("donor and target function must be different")
+		return RuntimeTransferResult{}, fmt.Errorf("donor and target function must be different")
 	}
 
 	if !prior.HasPrior {
-		return RuntimeTransferResult{},
-			fmt.Errorf("materialized weak prior does not contain transferable knowledge")
+		return RuntimeTransferResult{}, fmt.Errorf("materialized weak prior does not contain transferable knowledge")
 	}
 
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 
 	if _, exists := bm.bandits[targetFunctionName]; exists {
-		return RuntimeTransferResult{},
-			fmt.Errorf(
-				"target function %q already has a MAB policy",
-				targetFunctionName,
-			)
+		return RuntimeTransferResult{}, fmt.Errorf("target function %q already has a MAB policy", targetFunctionName)
 	}
 
 	target := bm.newBanditLocked(targetFunctionName)
 	targetPolicy := target.GetType()
 
 	if prior.Policy != targetPolicy {
-		return RuntimeTransferResult{},
-			fmt.Errorf(
-				"materialized weak prior policy %q does not match target policy %q",
-				prior.Policy,
-				targetPolicy,
-			)
+		return RuntimeTransferResult{}, fmt.Errorf("materialized weak prior policy %q does not match target policy %q", prior.Policy, targetPolicy)
 	}
 
 	if err := ApplyWeakMABPrior(target, prior); err != nil {
-		return RuntimeTransferResult{},
-			fmt.Errorf(
-				"apply materialized weak prior to target %q: %w",
-				targetFunctionName,
-				err,
-			)
+		return RuntimeTransferResult{}, fmt.Errorf("apply materialized weak prior to target %q: %w", targetFunctionName, err)
 	}
 
 	result := RuntimeTransferResult{

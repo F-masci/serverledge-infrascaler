@@ -42,7 +42,6 @@ func NewColdStartStatsStore() *ColdStartStatsStore {
 var GlobalColdStartStats = NewColdStartStatsStore()
 
 func (s *ColdStartStatsStore) getOrCreateLocked(functionName string, arm string) *ColdStartStats {
-
 	if s.stats == nil {
 		s.stats = make(map[string]map[string]*ColdStartStats)
 	}
@@ -61,7 +60,6 @@ func (s *ColdStartStatsStore) getOrCreateLocked(functionName string, arm string)
 // RecordObserved records an invocation regardless of whether it will later be
 // accepted, skipped or rejected as invalid.
 func (s *ColdStartStatsStore) RecordObserved(functionName string, arm string, feedback ExecutionFeedback) {
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -92,7 +90,6 @@ func (s *ColdStartStatsStore) RecordObserved(functionName string, arm string, fe
 }
 
 func (s *ColdStartStatsStore) RecordColdAccepted(functionName string, arm string) {
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -101,7 +98,6 @@ func (s *ColdStartStatsStore) RecordColdAccepted(functionName string, arm string
 }
 
 func (s *ColdStartStatsStore) RecordColdSkipped(functionName string, arm string) {
-
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -118,7 +114,6 @@ func (s *ColdStartStatsStore) RecordInvalid(functionName string, arm string) {
 }
 
 func (s *ColdStartStatsStore) Snapshot(functionName string, arm string) ColdStartStatsSnapshot {
-
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 

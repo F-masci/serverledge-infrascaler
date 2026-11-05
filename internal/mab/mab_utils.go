@@ -75,19 +75,8 @@ func UpdateBandit(body []byte, reqPath string, executionTag string, decision Dec
 	}
 
 	policy := string(bandit.GetType())
-	logMABExecutionTiming(
-		policy,
-		functionName,
-		executionTag,
-		feedback,
-	)
-
-	logMABKeplerEnergyFeedback(
-		policy,
-		functionName,
-		executionTag,
-		feedback.KeplerEnergy,
-	)
+	logMABExecutionTiming(policy, functionName, executionTag, feedback)
+	logMABKeplerEnergyFeedback(policy, functionName, executionTag, feedback.KeplerEnergy)
 
 	if !ResolveDecisionWithFeedback(decision, executionTag, feedback) {
 		failureReason = "decision_resolution_failed"

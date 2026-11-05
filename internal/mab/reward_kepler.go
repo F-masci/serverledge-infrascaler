@@ -68,21 +68,15 @@ func SelectKeplerRewardInput(feedback ExecutionFeedback) (KeplerRewardInput, err
 	}
 
 	zone, err := ConfiguredKeplerRewardZone()
-
 	if err != nil {
-		return KeplerRewardInput{},
-			err
+		return KeplerRewardInput{}, err
 	}
 
-	if len(
-		feedback.KeplerEnergy.CPUJoulesByZone,
-	) == 0 {
-
+	if len(feedback.KeplerEnergy.CPUJoulesByZone) == 0 {
 		return KeplerRewardInput{}, fmt.Errorf("Kepler energy feedback contains no CPU energy zones")
 	}
 
 	joules, ok := feedback.KeplerEnergy.CPUJoulesByZone[zone]
-
 	// Kepler currently exposes lower-case zone labels, but keep the lookup
 	// tolerant to case differences without changing the configured semantic
 	// domain.

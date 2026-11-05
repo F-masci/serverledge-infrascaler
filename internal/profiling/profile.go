@@ -79,12 +79,7 @@ type InvocationResourceProfile struct {
 // profiling could not produce a usable per-invocation sample.
 //
 // This legacy-compatible constructor only records the initial overhead.
-func NewInvalidInvocationResourceProfile(
-	containerID string,
-	exclusiveContainer bool,
-	reason string,
-	startOverhead time.Duration,
-) *InvocationResourceProfile {
+func NewInvalidInvocationResourceProfile(containerID string, exclusiveContainer bool, reason string, startOverhead time.Duration) *InvocationResourceProfile {
 	return &InvocationResourceProfile{
 		Enabled:                  true,
 		Collected:                false,
@@ -98,13 +93,7 @@ func NewInvalidInvocationResourceProfile(
 
 // NewInvalidInvocationResourceProfileWithOverheads records both the initial
 // and final container snapshot overheads when they are available.
-func NewInvalidInvocationResourceProfileWithOverheads(
-	containerID string,
-	exclusiveContainer bool,
-	reason string,
-	startOverhead time.Duration,
-	endOverhead time.Duration,
-) *InvocationResourceProfile {
+func NewInvalidInvocationResourceProfileWithOverheads(containerID string, exclusiveContainer bool, reason string, startOverhead time.Duration, endOverhead time.Duration) *InvocationResourceProfile {
 	return &InvocationResourceProfile{
 		Enabled:                  true,
 		Collected:                false,
@@ -177,113 +166,65 @@ func buildInvocationResourceProfile(
 	includeEndOverhead bool,
 ) *InvocationResourceProfile {
 
-	profile :=
-		&InvocationResourceProfile{
-			Enabled:                  true,
-			Collected:                true,
-			Valid:                    true,
-			ContainerID:              containerID,
-			ExclusiveContainer:       exclusiveContainer,
-			PageFaultsAvailable:      before.PageFaultsAvailable && after.PageFaultsAvailable,
-			ProfilingStartOverheadMs: durationMilliseconds(startOverhead),
-		}
+	profile := &InvocationResourceProfile{
+		Enabled:                  true,
+		Collected:                true,
+		Valid:                    true,
+		ContainerID:              containerID,
+		ExclusiveContainer:       exclusiveContainer,
+		PageFaultsAvailable:      before.PageFaultsAvailable && after.PageFaultsAvailable,
+		ProfilingStartOverheadMs: durationMilliseconds(startOverhead),
+	}
 
 	if includeEndOverhead {
-		profile.ProfilingEndOverheadMs =
-			durationMilliseconds(endOverhead)
-
-		profile.ProfilingTotalOverheadMs =
-			durationMilliseconds(startOverhead + endOverhead)
+		profile.ProfilingEndOverheadMs = durationMilliseconds(endOverhead)
+		profile.ProfilingTotalOverheadMs = durationMilliseconds(startOverhead + endOverhead)
 	}
 
 	var invalidReasons []string
 
 	if before.OSType != "" &&
 		!strings.EqualFold(before.OSType, "linux") {
-		invalidReasons =
-			append(
-				invalidReasons,
-				"unsupported_os_before",
-			)
+		invalidReasons = append(invalidReasons, "unsupported_os_before")
 	}
 
 	if after.OSType != "" &&
 		!strings.EqualFold(after.OSType, "linux") {
-		invalidReasons =
-			append(
-				invalidReasons,
-				"unsupported_os_after",
-			)
+		invalidReasons = append(invalidReasons, "unsupported_os_after")
 	}
 
 	var ok bool
 
-	profile.CPUUsageUserDeltaNs, ok =
-		counterDelta(
-			after.CPUUsageUserNs,
-			before.CPUUsageUserNs,
-		)
-
+	profile.CPUUsageUserDeltaNs, ok = counterDelta(after.CPUUsageUserNs, before.CPUUsageUserNs)
 	if !ok {
-		invalidReasons =
-			append(
-				invalidReasons,
-				"cpu_user_counter_regressed",
-			)
+		invalidReasons = append(invalidReasons, "cpu_user_counter_regressed")
 	}
 
-	profile.CPUUsageKernelDeltaNs, ok =
-		counterDelta(
-			after.CPUUsageKernelNs,
-			before.CPUUsageKernelNs,
-		)
-
+	profile.CPUUsageKernelDeltaNs, ok = counterDelta(after.CPUUsageKernelNs, before.CPUUsageKernelNs)
 	if !ok {
-		invalidReasons =
-			append(
-				invalidReasons,
-				"cpu_kernel_counter_regressed",
-			)
+		invalidReasons = append(invalidReasons, "cpu_kernel_counter_regressed")
 	}
 
 	if profile.PageFaultsAvailable {
-		profile.PageFaultsDelta, ok =
-			counterDelta(
-				after.PageFaults,
-				before.PageFaults,
-			)
-
+		profile.PageFaultsDelta, ok = counterDelta(after.PageFaults, before.PageFaults)
 		if !ok {
-			invalidReasons =
-				append(
-					invalidReasons,
-					"page_fault_counter_regressed",
-				)
+			invalidReasons = append(invalidReasons, "page_fault_counter_regressed")
 		}
 	}
 
 	// The measurement window must be positive: a non-positive wall time means
 	// the invocation was not actually observed.
 	if executionWallTime <= 0 {
-		invalidReasons =
-			append(
-				invalidReasons,
-				"non_positive_execution_wall_time",
-			)
+		invalidReasons = append(invalidReasons, "non_positive_execution_wall_time")
 	}
 
 	if !profile.ExclusiveContainer {
-		invalidReasons =
-			append(
-				invalidReasons,
-				"container_concurrency_not_exclusive",
-			)
+		invalidReasons = append(invalidReasons, "container_concurrency_not_exclusive")
 	}
 
 	if len(invalidReasons) > 0 {
 		profile.Valid = false
-		profile.InvalidReason =
-			strings.Join(invalidReasons, ",")
+		profile.InvalidReason = strings.Join(invalidReasons, ",")
 	}
 
 	return profile
@@ -291,20 +232,13 @@ func buildInvocationResourceProfile(
 
 // counterDelta subtracts two cumulative counters, reporting whether the counter
 // progressed monotonically.
-func counterDelta(
-	after uint64,
-	before uint64,
-) (uint64, bool) {
+func counterDelta(after uint64, before uint64) (uint64, bool) {
 	if after < before {
 		return 0, false
 	}
-
 	return after - before, true
 }
 
-func durationMilliseconds(
-	value time.Duration,
-) float64 {
-	return float64(value) /
-		float64(time.Millisecond)
+func durationMilliseconds(value time.Duration) float64 {
+	return float64(value) / float64(time.Millisecond)
 }

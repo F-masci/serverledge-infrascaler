@@ -547,28 +547,19 @@ func logMABRuntimeTransfer(
 func logMABSelectionRuntimeTransfer(
 	result SelectionRuntimeTransferResult,
 ) {
-	selectionReason :=
-		result.SelectionReason
-
+	selectionReason := result.SelectionReason
 	if selectionReason == "" {
-		selectionReason =
-			"none"
+		selectionReason = "none"
 	}
 
-	selectedDonor :=
-		result.SelectedDonorFunctionName
-
+	selectedDonor := result.SelectedDonorFunctionName
 	if selectedDonor == "" {
-		selectedDonor =
-			"none"
+		selectedDonor = "none"
 	}
 
-	runtimeReason :=
-		result.RuntimeReason
-
+	runtimeReason := result.RuntimeReason
 	if runtimeReason == "" {
-		runtimeReason =
-			"none"
+		runtimeReason = "none"
 	}
 
 	log.Printf(
@@ -616,48 +607,16 @@ func logMABKeplerEnergyFeedback(
 		return
 	}
 
-	zones :=
-		make(
-			[]string,
-			0,
-			len(
-				energy.CPUJoulesByZone,
-			),
-		)
-
+	zones := make([]string, 0, len(energy.CPUJoulesByZone))
 	for zone := range energy.CPUJoulesByZone {
-
-		zones =
-			append(
-				zones,
-				zone,
-			)
+		zones = append(zones, zone)
 	}
 
-	sort.Strings(
-		zones,
-	)
-
-	zoneValues :=
-		make(
-			[]string,
-			0,
-			len(
-				zones,
-			),
-		)
+	sort.Strings(zones)
+	zoneValues := make([]string, 0, len(zones))
 
 	for _, zone := range zones {
-
-		zoneValues =
-			append(
-				zoneValues,
-				fmt.Sprintf(
-					"%s=%.9f",
-					zone,
-					energy.CPUJoulesByZone[zone],
-				),
-			)
+		zoneValues = append(zoneValues, fmt.Sprintf("%s=%.9f", zone, energy.CPUJoulesByZone[zone]))
 	}
 
 	log.Printf(

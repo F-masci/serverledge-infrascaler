@@ -9,55 +9,27 @@ import (
 
 // A Factory to create and manage container.
 type Factory interface {
-	Create(
-		string,
-		*ContainerOptions,
-	) (ContainerID, error)
+	Create(string, *ContainerOptions) (ContainerID, error)
 
-	CopyToContainer(
-		ContainerID,
-		io.Reader,
-		string,
-	) error
+	CopyToContainer(ContainerID, io.Reader, string) error
 
-	Start(
-		ContainerID,
-	) error
+	Start(ContainerID) error
 
-	Destroy(
-		ContainerID,
-	) error
+	Destroy(ContainerID) error
 
-	HasImage(
-		string,
-	) bool
+	HasImage(string) bool
 
-	PullImage(
-		string,
-	) error
+	PullImage(string) error
 
-	GetIPAddress(
-		ContainerID,
-	) (string, error)
+	GetIPAddress(ContainerID) (string, error)
 
-	GetMemoryMB(
-		id ContainerID,
-	) (int64, error)
+	GetMemoryMB(id ContainerID) (int64, error)
 
-	GetLog(
-		id ContainerID,
-	) (string, error)
+	GetLog(id ContainerID) (string, error)
 
-	GetResourceSnapshot(
-		id ContainerID,
-	) (
-		profiling.ResourceSnapshot,
-		error,
-	)
+	GetResourceSnapshot(id ContainerID) (profiling.ResourceSnapshot, error)
 
-	GetImageArchitectures(
-		string,
-	) ([]string, error)
+	GetImageArchitectures(string) ([]string, error)
 }
 
 // ContainerOptions contains options for container creation.

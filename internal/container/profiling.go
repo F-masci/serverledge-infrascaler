@@ -172,21 +172,13 @@ func ExecuteProfiled(cont *Container, req *executor.InvocationRequest, collectRe
 	if resourceProfilingEnabled {
 		if containerBeforeErr == nil {
 			containerEndSnapshotStartedAt := time.Now()
-
-			containerAfter, containerAfterErr =
-				cf.GetResourceSnapshot(contID)
-
-			containerEndOverhead =
-				time.Since(containerEndSnapshotStartedAt)
+			containerAfter, containerAfterErr = cf.GetResourceSnapshot(contID)
+			containerEndOverhead = time.Since(containerEndSnapshotStartedAt)
 		}
 
 		nodeEndSnapshotStartedAt := time.Now()
-
-		nodeAfter, nodeAfterErr =
-			profiling.ReadNodeResourceSnapshot()
-
-		nodeEndOverhead =
-			time.Since(nodeEndSnapshotStartedAt)
+		nodeAfter, nodeAfterErr = profiling.ReadNodeResourceSnapshot()
+		nodeEndOverhead = time.Since(nodeEndSnapshotStartedAt)
 	}
 
 	// Kepler is deliberately read only after the execution and after the
@@ -221,10 +213,7 @@ func ExecuteProfiled(cont *Container, req *executor.InvocationRequest, collectRe
 				profiling.NewInvalidInvocationResourceProfileWithOverheads(
 					contID,
 					true,
-					fmt.Sprintf(
-						"snapshot_before_failed: %v",
-						containerBeforeErr,
-					),
+					fmt.Sprintf("snapshot_before_failed: %v", containerBeforeErr),
 					containerStartOverhead,
 					containerEndOverhead,
 				)
@@ -234,10 +223,7 @@ func ExecuteProfiled(cont *Container, req *executor.InvocationRequest, collectRe
 				profiling.NewInvalidInvocationResourceProfileWithOverheads(
 					contID,
 					true,
-					fmt.Sprintf(
-						"snapshot_after_failed: %v",
-						containerAfterErr,
-					),
+					fmt.Sprintf("snapshot_after_failed: %v", containerAfterErr),
 					containerStartOverhead,
 					containerEndOverhead,
 				)

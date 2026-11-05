@@ -374,17 +374,11 @@ func isUCB1FamilyPolicy(policy BanditType) bool {
 
 func validateTransferPolicyCompatibility(sourcePolicy BanditType, targetPolicy BanditType) error {
 	if !isUCB1FamilyPolicy(sourcePolicy) {
-		return fmt.Errorf(
-			"unsupported donor transfer policy %q: only UCB1 and UCB1Decoupled are supported",
-			sourcePolicy,
-		)
+		return fmt.Errorf("unsupported donor transfer policy %q: only UCB1 and UCB1Decoupled are supported", sourcePolicy)
 	}
 
 	if !isUCB1FamilyPolicy(targetPolicy) {
-		return fmt.Errorf(
-			"unsupported target transfer policy %q: only UCB1 and UCB1Decoupled are supported",
-			targetPolicy,
-		)
+		return fmt.Errorf("unsupported target transfer policy %q: only UCB1 and UCB1Decoupled are supported", targetPolicy)
 	}
 
 	return nil

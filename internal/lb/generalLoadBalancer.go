@@ -25,7 +25,7 @@ type GeneralLoadBalancer struct {
 	// rings maintains a separate hash ring for each architecture tag.
 	// The key is the node’s machine_tag (e.g. ‘x86’, “arm”, ‘x86_plus’).
 	// The rings are created dynamically in AddTarget when
-	// a previously unseen tag appears (lazy initialisation).
+	// a previously unseen tag appears (lazy initialization).
 	rings map[string]*HashRing
 
 	// archRRIndex is the index for Round Robin across different architectures/tags.
@@ -43,7 +43,7 @@ type GeneralLoadBalancer struct {
 	replicas int
 
 	// rrIndexes stores the current Round Robin index for each architecture/tag.
-	// It is a generalisation of the armRRIndex and x86RRIndex from the previous version:
+	// It is a generalization of the armRRIndex and x86RRIndex from the previous version:
 	// instead of two fixed fields, it is a map that works with N architectures/tags.
 	//
 	// Used for Round Robin scheduling of nodes within a single ring, especially
@@ -56,7 +56,7 @@ type GeneralLoadBalancer struct {
 	// whether the function supports the physical architecture required for execution.
 	tagToArch map[string]string
 
-	// architectures is the sorted/deterministic list of tags recognised by the balancer.
+	// architectures is the sorted/deterministic list of tags recognized by the balancer.
 	// It is used for round-robin load balancing across architectures/tags:
 	// Go does not guarantee a consistent order when iterating over maps, so without
 	// this slice, round-robin load balancing would be non-deterministic and experiments
@@ -132,7 +132,7 @@ func (b *GeneralLoadBalancer) Next(c echo.Context) *middleware.ProxyTarget {
 
 		// Fallback to Round Robin.
 		//
-		// For now, we keep the previous behaviour for requests that are not invocations:
+		// For now, we keep the previous behavior for requests that are not invocations:
 		// since these requests do not refer to a specific function, they do not have
 		// function-level hardware constraints. Therefore, we select one available tag
 		// using the generalized Round Robin logic over the rings.
@@ -207,72 +207,37 @@ func (b *GeneralLoadBalancer) Next(c echo.Context) *middleware.ProxyTarget {
 	// The Get function will cycle through the hash ring to find a suitable node.
 	// If none is found in the selected ring, we try the other compatible rings in a
 	// deterministic order to maximize chances of execution.
-	candidate :=
-		b.getCandidateFromTag(
-			targetTag,
-			fun,
-		)
+	candidate := b.getCandidateFromTag(targetTag, fun)
 
 	fallbackReason := ""
 
 	if candidate == nil {
-		candidate =
-			b.getCandidateFromFallbackTags(
-				targetTag,
-				compatibleTags,
-				fun,
-			)
+		candidate = b.getCandidateFromFallbackTags(targetTag, compatibleTags, fun)
 
 		if candidate != nil {
-			fallbackReason =
-				mab.FallbackReasonSelectedArmNoCandidate
+			fallbackReason = mab.FallbackReasonSelectedArmNoCandidate
 		}
 	}
 
 	if candidate == nil {
 		if b.mode == MAB {
-			mab.CancelDecision(
-				reqID,
-				mab.DecisionFailureReasonNoCandidateAfterFallback,
-			)
+			mab.CancelDecision(reqID, mab.DecisionFailureReasonNoCandidateAfterFallback)
 		}
 
-		log.Printf(
-			"[LB] No candidate available for function '%s' after fallback\n",
-			funcName,
-		)
-
-		setHardwareNotSupported(
-			c,
-			funcName,
-		)
-
+		log.Printf("[LB] No candidate available for function '%s' after fallback\n", funcName)
+		setHardwareNotSupported(c, funcName)
 		return nil
 	}
 
-	candidateTag :=
-		getTargetMachineTag(
-			candidate,
-		)
+	candidateTag := getTargetMachineTag(candidate)
 
 	if candidateTag == "" {
 		if b.mode == MAB {
-			mab.CancelDecision(
-				reqID,
-				"candidate_missing_machine_tag",
-			)
+			mab.CancelDecision(reqID, "candidate_missing_machine_tag")
 		}
 
-		log.Printf(
-			"[LB] Candidate '%s' has no machine tag for function '%s'\n",
-			candidate.Name,
-			funcName,
-		)
-
-		setHardwareNotSupported(
-			c,
-			funcName,
-		)
+		log.Printf("[LB] Candidate '%s' has no machine tag for function '%s'\n", candidate.Name, funcName)
+		setHardwareNotSupported(c, funcName)
 
 		return nil
 	}
@@ -288,11 +253,7 @@ func (b *GeneralLoadBalancer) Next(c echo.Context) *middleware.ProxyTarget {
 
 			// Defensive recovery: the policy has already incremented InFlight,
 			// therefore a missing record must still close the selected arm.
-			bandit :=
-				mab.GlobalBanditManager.
-					GetBandit(
-						funcName,
-					)
+			bandit := mab.GlobalBanditManager.GetBandit(funcName)
 
 			bandit.ResolveSelection(
 				targetTag,
@@ -310,11 +271,7 @@ func (b *GeneralLoadBalancer) Next(c echo.Context) *middleware.ProxyTarget {
 				candidateTag,
 			)
 
-			setHardwareNotSupported(
-				c,
-				funcName,
-			)
-
+			setHardwareNotSupported(c, funcName)
 			return nil
 		}
 	}
@@ -350,12 +307,7 @@ func (b *GeneralLoadBalancer) Next(c echo.Context) *middleware.ProxyTarget {
 //
 // In MAB mode the policy is always invoked, even when the mask contains one arm.
 // This keeps constrained and unconstrained invocations on the same selection path.
-func (b *GeneralLoadBalancer) selectTargetTag(
-	funcName string,
-	fun *function.Function,
-	compatibleTags []string,
-	ctx *mab.Context,
-) string {
+func (b *GeneralLoadBalancer) selectTargetTag(funcName string, fun *function.Function, compatibleTags []string, ctx *mab.Context) string {
 	if len(compatibleTags) == 0 {
 		return ""
 	}
@@ -372,11 +324,7 @@ func (b *GeneralLoadBalancer) selectTargetTag(
 		bandit := mab.GlobalBanditManager.GetBandit(funcName)
 
 		// The MAB sees only the actions currently allowed for this function.
-		selectedTag := bandit.SelectArmFrom(
-			ctx,
-			compatibleTags,
-		)
-
+		selectedTag := bandit.SelectArmFrom(ctx, compatibleTags)
 		log.Printf(
 			"[LB][MAB] event=after_select function=%s selected_tag=%s compatible_tags=%v\n",
 			funcName,
@@ -390,8 +338,7 @@ func (b *GeneralLoadBalancer) selectTargetTag(
 			// Update archRRIndex to maintain consistency if the mode changes.
 			for i, tag := range b.architectures {
 				if tag == selectedTag {
-					b.archRRIndex =
-						(i + 1) % len(b.architectures)
+					b.archRRIndex = (i + 1) % len(b.architectures)
 					break
 				}
 			}
@@ -474,8 +421,7 @@ func (b *GeneralLoadBalancer) compatibleTagsForFunction(fun *function.Function) 
 		}
 		compatibleTags = append(compatibleTags, tag)
 
-		log.Printf(
-			"[LB] Compatible tag found: function=%s tag=%s arch=%s pattern=%q ring_size=%d\n",
+		log.Printf("[LB] Compatible tag found: function=%s tag=%s arch=%s pattern=%q ring_size=%d\n",
 			fun.Name, tag, arch, pattern, ring.Size(),
 		)
 	}
@@ -647,10 +593,7 @@ func (b *GeneralLoadBalancer) RemoveTarget(name string) bool {
 }
 
 // getCandidateFromTag tries to select a concrete target from a specific ring/tag.
-func (b *GeneralLoadBalancer) getCandidateFromTag(
-	tag string,
-	fun *function.Function,
-) *middleware.ProxyTarget {
+func (b *GeneralLoadBalancer) getCandidateFromTag(tag string, fun *function.Function) *middleware.ProxyTarget {
 	if tag == "" {
 		return nil
 	}
@@ -689,7 +632,7 @@ func (b *GeneralLoadBalancer) getCandidateFromFallbackTags(selectedTag string, c
 //
 // Backward compatibility:
 // if machine_tag is missing, the function falls back to arch.
-// This preserves the old behaviour where one ring was created for ARM and one for x86.
+// This preserves the old behavior where one ring was created for ARM and one for x86.
 func getTargetMachineTag(t *middleware.ProxyTarget) string {
 	if t == nil || t.Meta == nil {
 		return ""
