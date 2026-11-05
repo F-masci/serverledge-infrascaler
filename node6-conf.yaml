@@ -1,6 +1,0 @@
-etcd.address: 127.0.0.1:2379
-api.port: 1328
-registry.area: ROME
-registry.udp.port: 9881
-node.machine_tag: x86
-container.pool.memory: 512
