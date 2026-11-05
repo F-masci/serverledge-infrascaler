@@ -2,9 +2,6 @@ package mab
 
 import (
 	"fmt"
-	"math"
-
-	"gonum.org/v1/gonum/mat"
 )
 
 // ApplyWeakMABPrior applies an already-built weak donor prior to a fresh target
@@ -45,15 +42,6 @@ func ApplyWeakMABPrior(target Policy, prior WeakMABPrior) error {
 	case *UCB1DecoupledBandit:
 		if typed == nil {
 			return fmt.Errorf("target UCB1Decoupled policy cannot be nil")
-		}
-		if typed.FunctionName == prior.DonorFunctionName {
-			return fmt.Errorf("weak prior donor and target function must be different")
-		}
-		return typed.applyWeakPrior(prior)
-
-	case *LinUCBDisjointPolicy:
-		if typed == nil {
-			return fmt.Errorf("target LinUCB policy cannot be nil")
 		}
 		if typed.FunctionName == prior.DonorFunctionName {
 			return fmt.Errorf("weak prior donor and target function must be different")
@@ -131,10 +119,7 @@ func (b *UCB1Bandit) validateFreshTargetForWeakPriorLocked() error {
 			stats.PriorExplorationObservationWeight != 0.0 ||
 			stats.PriorRewardSum != 0.0 {
 
-			return fmt.Errorf(
-				"weak prior can only be applied to a fresh UCB1 target: arm %q already contains learning state",
-				arm,
-			)
+			return fmt.Errorf("weak prior can only be applied to a fresh UCB1 target: arm %q already contains learning state", arm)
 		}
 	}
 
@@ -204,107 +189,7 @@ func (b *UCB1DecoupledBandit) validateFreshTargetForWeakPriorLocked() error {
 			stats.PriorExplorationObservationWeight != 0.0 ||
 			stats.PriorRewardSum != 0.0 {
 
-			return fmt.Errorf(
-				"weak prior can only be applied to a fresh UCB1Decoupled target: arm %q already contains learning state",
-				arm,
-			)
-		}
-	}
-
-	return nil
-}
-
-func (p *LinUCBDisjointPolicy) applyWeakPrior(prior WeakMABPrior) error {
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if err := p.validateFreshTargetForWeakPriorLocked(); err != nil {
-		return err
-	}
-
-	for arm, priorArm := range prior.Arms {
-		if !priorArm.Transferred {
-			continue
-		}
-
-		if _, exists := p.Arms[arm]; !exists {
-			return fmt.Errorf("weak prior arm %q is not initialized in target LinUCB policy", arm)
-		}
-
-		if priorArm.LinUCB.Dim != p.Dim {
-			return fmt.Errorf("weak prior arm %q dimension %d does not match target LinUCB dimension %d", arm, priorArm.LinUCB.Dim, p.Dim)
-		}
-	}
-
-	if !prior.HasPrior {
-		return nil
-	}
-
-	for arm, priorArm := range prior.Arms {
-		if !priorArm.Transferred {
-			continue
-		}
-
-		payload := priorArm.LinUCB
-		state := p.Arms[arm]
-
-		for i := 0; i < p.Dim; i++ {
-			for j := 0; j < p.Dim; j++ {
-				value := payload.AContribution[i][j]
-				state.A.Set(i, j, state.A.At(i, j)+value)
-				state.PriorAContribution.Set(i, j, value)
-			}
-
-			value := payload.BContribution[i]
-			state.b.SetVec(i, state.b.AtVec(i)+value)
-			state.PriorBContribution.SetVec(i, value)
-		}
-
-		state.PriorObservationWeight = payload.ObservationWeight
-	}
-
-	p.PriorDonorFunctionName = prior.DonorFunctionName
-
-	return nil
-}
-
-func (p *LinUCBDisjointPolicy) validateFreshTargetForWeakPriorLocked() error {
-	if p.PriorDonorFunctionName != "" {
-		return fmt.Errorf("target LinUCB policy already has a weak prior from donor %q", p.PriorDonorFunctionName)
-	}
-
-	if p.TotalInFlight != 0 {
-		return fmt.Errorf("weak prior can only be applied to a fresh LinUCB target")
-	}
-
-	for arm, state := range p.Arms {
-		if state == nil ||
-			state.A == nil ||
-			state.b == nil ||
-			state.RealAContribution == nil ||
-			state.RealBContribution == nil ||
-			state.PriorAContribution == nil ||
-			state.PriorBContribution == nil {
-
-			return fmt.Errorf("target LinUCB arm %q has incomplete state", arm)
-		}
-
-		if state.InFlight != 0 ||
-			state.RealObservationCount != 0 ||
-			state.SyntheticObservationCount != 0 ||
-			state.PriorObservationWeight != 0.0 ||
-			!denseIsIdentity(state.A, p.Dim) ||
-			!vectorIsZero(state.b, p.Dim) ||
-			!denseIsZero(state.RealAContribution, p.Dim, p.Dim) ||
-			!vectorIsZero(state.RealBContribution, p.Dim) ||
-			!denseIsZero(state.PriorAContribution, p.Dim, p.Dim) ||
-			!vectorIsZero(state.PriorBContribution, p.Dim) {
-
-			return fmt.Errorf(
-				"weak prior can only be applied to a fresh LinUCB target: arm %q already contains learning state",
-				arm,
-			)
+			return fmt.Errorf("weak prior can only be applied to a fresh UCB1Decoupled target: arm %q already contains learning state", arm)
 		}
 	}
 
@@ -328,7 +213,7 @@ func validateWeakMABPriorForApplication(prior WeakMABPrior) error {
 	}
 
 	switch prior.Policy {
-	case UCB1, UCB1Decoupled, LinUCB:
+	case UCB1, UCB1Decoupled:
 		// Supported.
 	default:
 		return fmt.Errorf("unsupported weak prior policy %q", prior.Policy)
@@ -415,7 +300,7 @@ func validateTransferredWeakPriorArm(arm string, policy BanditType, config WeakM
 
 	switch policy {
 	case UCB1, UCB1Decoupled:
-		if priorArm.UCB1 == nil || priorArm.LinUCB != nil {
+		if priorArm.UCB1 == nil {
 			return fmt.Errorf("weak prior arm %q has invalid UCB1 payload", arm)
 		}
 
@@ -443,34 +328,6 @@ func validateTransferredWeakPriorArm(arm string, policy BanditType, config WeakM
 		if policy == UCB1 && !weakPriorAlmostEqual(payload.ObservationWeight, payload.ExplorationObservationWeight) {
 			return fmt.Errorf("legacy UCB1 prior arm %q must use coupled reward/exploration weights", arm)
 		}
-
-	case LinUCB:
-		if priorArm.AppliedExplorationObservationWeight != 0.0 {
-			return fmt.Errorf("LinUCB weak prior arm %q cannot contain UCB1 exploration weight", arm)
-		}
-		if priorArm.LinUCB == nil || priorArm.UCB1 != nil {
-			return fmt.Errorf("weak prior arm %q has invalid LinUCB payload", arm)
-		}
-
-		payload := priorArm.LinUCB
-		if payload.Dim <= 0 || !isFiniteNumber(payload.ObservationWeight) || !weakPriorAlmostEqual(payload.ObservationWeight, rewardWeight) {
-			return fmt.Errorf("weak prior arm %q has invalid LinUCB metadata", arm)
-		}
-
-		if len(payload.AContribution) != payload.Dim || len(payload.BContribution) != payload.Dim {
-			return fmt.Errorf("weak prior arm %q has invalid LinUCB dimensions", arm)
-		}
-
-		for i := 0; i < payload.Dim; i++ {
-			if len(payload.AContribution[i]) != payload.Dim || !isFiniteNumber(payload.BContribution[i]) {
-				return fmt.Errorf("weak prior arm %q has invalid LinUCB dimensions", arm)
-			}
-			for j := 0; j < payload.Dim; j++ {
-				if !isFiniteNumber(payload.AContribution[i][j]) {
-					return fmt.Errorf("weak prior arm %q has non-finite LinUCB contribution", arm)
-				}
-			}
-		}
 	}
 
 	return nil
@@ -478,7 +335,6 @@ func validateTransferredWeakPriorArm(arm string, policy BanditType, config WeakM
 
 func validateSkippedWeakPriorArm(arm string, config WeakMABPriorConfig, priorArm WeakMABArmPrior) error {
 	if priorArm.UCB1 != nil ||
-		priorArm.LinUCB != nil ||
 		priorArm.AppliedEquivalentObservationWeight != 0.0 ||
 		priorArm.AppliedExplorationObservationWeight != 0.0 ||
 		priorArm.AttenuationScale != 0.0 {
@@ -501,60 +357,4 @@ func validateSkippedWeakPriorArm(arm string, config WeakMABPriorConfig, priorArm
 	}
 
 	return nil
-}
-
-func denseIsIdentity(matrix *mat.Dense, dim int) bool {
-
-	rows, cols := matrix.Dims()
-	if rows != dim || cols != dim {
-		return false
-	}
-
-	for i := 0; i < dim; i++ {
-		for j := 0; j < dim; j++ {
-			expected := 0.0
-			if i == j {
-				expected = 1.0
-			}
-
-			if math.Abs(matrix.At(i, j)-expected) > 1e-12 {
-				return false
-			}
-		}
-	}
-
-	return true
-}
-
-func denseIsZero(matrix *mat.Dense, rows int, cols int) bool {
-
-	actualRows, actualCols := matrix.Dims()
-	if actualRows != rows || actualCols != cols {
-		return false
-	}
-
-	for i := 0; i < rows; i++ {
-		for j := 0; j < cols; j++ {
-			if math.Abs(matrix.At(i, j)) > 1e-12 {
-				return false
-			}
-		}
-	}
-
-	return true
-}
-
-func vectorIsZero(vector *mat.VecDense, dim int) bool {
-
-	if vector.Len() != dim {
-		return false
-	}
-
-	for i := 0; i < dim; i++ {
-		if math.Abs(vector.AtVec(i)) > 1e-12 {
-			return false
-		}
-	}
-
-	return true
 }

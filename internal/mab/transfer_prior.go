@@ -103,9 +103,8 @@ type WeakMABArmPrior struct {
 	// UCB1Decoupled. LinUCB leaves it at zero.
 	AppliedExplorationObservationWeight float64 `json:"applied_exploration_observation_weight,omitempty"`
 
-	AttenuationScale float64             `json:"attenuation_scale"`
-	UCB1             *WeakUCB1ArmPrior   `json:"ucb1,omitempty"`
-	LinUCB           *WeakLinUCBArmPrior `json:"linucb,omitempty"`
+	AttenuationScale float64           `json:"attenuation_scale"`
+	UCB1             *WeakUCB1ArmPrior `json:"ucb1,omitempty"`
 }
 
 // WeakUCB1ArmPrior represents an attenuated UCB1-family reward prior.
@@ -118,15 +117,6 @@ type WeakUCB1ArmPrior struct {
 	ExplorationObservationWeight float64 `json:"exploration_observation_weight"`
 	RewardSum                    float64 `json:"reward_sum"`
 	MeanReward                   float64 `json:"mean_reward"`
-}
-
-// WeakLinUCBArmPrior contains the attenuated contextual contribution that can
-// later be added to the target LinUCB model.
-type WeakLinUCBArmPrior struct {
-	ObservationWeight float64     `json:"observation_weight"`
-	Dim               int         `json:"dim"`
-	AContribution     [][]float64 `json:"a_contribution"`
-	BContribution     []float64   `json:"b_contribution"`
 }
 
 type resolvedWeakPriorWeights struct {
@@ -258,15 +248,6 @@ func BuildWeakMABPriorForTarget(source TransferableMABKnowledge, targetPolicy Ba
 				MeanReward:                   meanReward,
 			}
 
-		case LinUCB:
-			sourceLin := sourceArm.LinUCB
-			priorArm.LinUCB = &WeakLinUCBArmPrior{
-				ObservationWeight: appliedRewardWeight,
-				Dim:               sourceLin.Dim,
-				AContribution:     scaleNestedMatrix(sourceLin.AContribution, scale),
-				BContribution:     scaleVector(sourceLin.BContribution, scale),
-			}
-
 		default:
 			return WeakMABPrior{}, fmt.Errorf("unsupported target MAB policy %q", targetPolicy)
 		}
@@ -368,7 +349,6 @@ func validateWeakMABPriorConfig(config WeakMABPriorConfig) error {
 
 func validateWeakMABPriorConfigForPolicy(config WeakMABPriorConfig, policy BanditType) error {
 	usesDecoupled := weakPriorUsesDecoupledWeights(config)
-	anchorEnabled := config.UCB1ReferenceAnchor != nil && config.UCB1ReferenceAnchor.Enabled
 
 	switch policy {
 	case UCB1:
@@ -379,14 +359,6 @@ func validateWeakMABPriorConfigForPolicy(config WeakMABPriorConfig, policy Bandi
 	case UCB1Decoupled:
 		if !usesDecoupled {
 			return fmt.Errorf("policy %s requires reward_observation_weight and exploration_observation_weight", UCB1Decoupled)
-		}
-
-	case LinUCB:
-		if usesDecoupled {
-			return fmt.Errorf("decoupled UCB1 weights are not valid for LinUCB")
-		}
-		if anchorEnabled {
-			return fmt.Errorf("UCB1 reference anchoring is not valid for LinUCB")
 		}
 
 	default:
@@ -401,33 +373,21 @@ func isUCB1FamilyPolicy(policy BanditType) bool {
 }
 
 func validateTransferPolicyCompatibility(sourcePolicy BanditType, targetPolicy BanditType) error {
-	switch sourcePolicy {
-	case UCB1, UCB1Decoupled, LinUCB:
-		// Supported donor policy.
-	default:
-		return fmt.Errorf("unsupported donor MAB policy %q", sourcePolicy)
+	if !isUCB1FamilyPolicy(sourcePolicy) {
+		return fmt.Errorf(
+			"unsupported donor transfer policy %q: only UCB1 and UCB1Decoupled are supported",
+			sourcePolicy,
+		)
 	}
 
-	switch targetPolicy {
-	case UCB1, UCB1Decoupled, LinUCB:
-		// Supported target policy.
-	default:
-		return fmt.Errorf("unsupported target MAB policy %q", targetPolicy)
+	if !isUCB1FamilyPolicy(targetPolicy) {
+		return fmt.Errorf(
+			"unsupported target transfer policy %q: only UCB1 and UCB1Decoupled are supported",
+			targetPolicy,
+		)
 	}
 
-	if sourcePolicy == targetPolicy {
-		return nil
-	}
-
-	if isUCB1FamilyPolicy(sourcePolicy) && isUCB1FamilyPolicy(targetPolicy) {
-		return nil
-	}
-
-	return fmt.Errorf(
-		"incompatible transfer policies: donor=%s target=%s",
-		sourcePolicy,
-		targetPolicy,
-	)
+	return nil
 }
 
 func resolveWeakPriorWeights(config WeakMABPriorConfig, policy BanditType) (resolvedWeakPriorWeights, error) {
@@ -497,7 +457,7 @@ func validateTransferableKnowledgeForPrior(source TransferableMABKnowledge) erro
 	}
 
 	switch source.Policy {
-	case UCB1, UCB1Decoupled, LinUCB:
+	case UCB1, UCB1Decoupled:
 		// Supported.
 	default:
 		return fmt.Errorf("unsupported MAB policy %q", source.Policy)
@@ -524,20 +484,11 @@ func validateTransferableKnowledgeForPrior(source TransferableMABKnowledge) erro
 
 		switch source.Policy {
 		case UCB1, UCB1Decoupled:
-			if sourceArm.UCB1 == nil || sourceArm.LinUCB != nil {
+			if sourceArm.UCB1 == nil {
 				return fmt.Errorf("arm %q has invalid UCB1 transferable payload", arm)
 			}
 
 			if err := validateTransferableUCB1Arm(arm, sourceArm.RealObservationCount, sourceArm.UCB1); err != nil {
-				return err
-			}
-
-		case LinUCB:
-			if sourceArm.LinUCB == nil || sourceArm.UCB1 != nil {
-				return fmt.Errorf("arm %q has invalid LinUCB transferable payload", arm)
-			}
-
-			if err := validateTransferableLinUCBArm(arm, sourceArm.LinUCB); err != nil {
 				return err
 			}
 		}
@@ -577,64 +528,6 @@ func validateTransferableUCB1Arm(arm string, realCount int64, source *Transferab
 	}
 
 	return nil
-}
-
-func validateTransferableLinUCBArm(arm string, source *TransferableLinUCBArmKnowledge) error {
-	if source.Dim < 1 {
-		return fmt.Errorf("arm %q has invalid LinUCB dimension", arm)
-	}
-
-	if len(source.AContribution) != source.Dim {
-		return fmt.Errorf("arm %q has invalid LinUCB A row count", arm)
-	}
-
-	for i, row := range source.AContribution {
-		if len(row) != source.Dim {
-			return fmt.Errorf("arm %q has invalid LinUCB A column count at row %d", arm, i)
-		}
-
-		for _, value := range row {
-			if !isFiniteNumber(value) {
-				return fmt.Errorf("arm %q has non-finite LinUCB A contribution", arm)
-			}
-		}
-	}
-
-	if len(source.BContribution) != source.Dim {
-		return fmt.Errorf("arm %q has invalid LinUCB b dimension", arm)
-	}
-
-	for _, value := range source.BContribution {
-		if !isFiniteNumber(value) {
-			return fmt.Errorf("arm %q has non-finite LinUCB b contribution", arm)
-		}
-	}
-
-	return nil
-}
-
-func scaleNestedMatrix(source [][]float64, scale float64) [][]float64 {
-	result := make([][]float64, len(source))
-
-	for i, row := range source {
-		result[i] = make([]float64, len(row))
-
-		for j, value := range row {
-			result[i][j] = value * scale
-		}
-	}
-
-	return result
-}
-
-func scaleVector(source []float64, scale float64) []float64 {
-	result := make([]float64, len(source))
-
-	for i, value := range source {
-		result[i] = value * scale
-	}
-
-	return result
 }
 
 func weakPriorAlmostEqual(left float64, right float64) bool {

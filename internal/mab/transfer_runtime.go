@@ -119,9 +119,6 @@ func transferableKnowledgeFromPolicy(policy Policy) (TransferableMABKnowledge, b
 	case *UCB1DecoupledBandit:
 		return typed.TransferableKnowledge(), true
 
-	case *LinUCBDisjointPolicy:
-		return typed.TransferableKnowledge(), true
-
 	default:
 		return TransferableMABKnowledge{}, false
 	}

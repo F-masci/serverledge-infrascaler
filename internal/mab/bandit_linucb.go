@@ -32,10 +32,6 @@ type LinUCBDisjointPolicy struct {
 	// Dimension of the feature vector (d)
 	// Bias (1) + MemoryFeature (1) = 2
 	Dim int
-
-	// PriorDonorFunctionName records the donor used to initialize this target.
-	// The value is provenance only and does not change the LinUCB formula.
-	PriorDonorFunctionName string
 }
 
 // LinUCBArmState holds the matrix A and vector b for a specific arm.
@@ -60,18 +56,8 @@ type LinUCBArmState struct {
 	RealObservationCount int64
 
 	// SyntheticObservationCount is diagnostic only.
-	//
-	// Synthetic fallback observations continue to update the live A and b but
-	// are excluded from the transferable contextual knowledge.
+	// Synthetic fallback observations continue to update the live A and b.
 	SyntheticObservationCount int64
-
-	// Prior* contains donor-derived weak contextual evidence applied before the
-	// target function starts learning. It contributes to the live A and b used
-	// for selection, but it is deliberately excluded from Real* so that a
-	// received prior can never be re-exported as target experience.
-	PriorAContribution     *mat.Dense
-	PriorBContribution     *mat.VecDense
-	PriorObservationWeight float64
 }
 
 // NewLinUCBDisjointPolicy creates a new instance of the policy.
@@ -102,31 +88,17 @@ func (p *LinUCBDisjointPolicy) InitArm(arm string) {
 	// Initialize b as Zero Vector (d)
 	b := mat.NewVecDense(p.Dim, nil)
 
-	realAContribution := mat.NewDense(
-		p.Dim,
-		p.Dim,
-		nil,
-	)
-
+	realAContribution := mat.NewDense(p.Dim, p.Dim, nil)
 	realBContribution := mat.NewVecDense(p.Dim, nil)
-	priorAContribution := mat.NewDense(p.Dim, p.Dim, nil)
-	priorBContribution := mat.NewVecDense(p.Dim, nil)
 
 	p.Arms[arm] = &LinUCBArmState{
-		A:                  A,
-		b:                  b,
-		RealAContribution:  realAContribution,
-		RealBContribution:  realBContribution,
-		PriorAContribution: priorAContribution,
-		PriorBContribution: priorBContribution,
+		A:                 A,
+		b:                 b,
+		RealAContribution: realAContribution,
+		RealBContribution: realBContribution,
 	}
 
-	logMABArmAdded(
-		string(p.GetType()),
-		arm,
-		p.FunctionName,
-		formatArmsFromMap(p.Arms),
-	)
+	logMABArmAdded(string(p.GetType()), arm, p.FunctionName, formatArmsFromMap(p.Arms))
 }
 
 // SelectArm chooses among all arms known by the policy.
@@ -430,12 +402,7 @@ func (p *LinUCBDisjointPolicy) updateRewardLocked(arm string, ctx *Context, feed
 	state.RealBContribution.AddVec(state.RealBContribution, &scaledX)
 	state.RealObservationCount++
 
-	recordAcceptedExecutionFeedback(
-		policy,
-		p.FunctionName,
-		arm,
-		feedback,
-	)
+	recordAcceptedExecutionFeedback(policy, p.FunctionName, arm, feedback)
 
 	logMABContextualUpdateReward(
 		policy,
