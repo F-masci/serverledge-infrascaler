@@ -46,9 +46,6 @@ func main() {
 	case "export-samples-csv":
 		runExportSamplesCSV(os.Args[2:])
 
-	case "export-paper-rf-csv":
-		runExportPaperRFCSV(os.Args[2:])
-
 	case "aggregate-cold":
 		runAggregateCold(os.Args[2:])
 
@@ -168,7 +165,6 @@ func printUsage() {
 	fmt.Println("  aggregate             build FunctionProfile records from one or more raw InvocationSample JSONL datasets")
 	fmt.Println("  export-csv            export separate mean and median CSV datasets from FunctionProfile JSONL")
 	fmt.Println("  export-samples-csv    export one CSV row per eligible warm invocation, without aggregating")
-	fmt.Println("  export-paper-rf-csv   export one schema-6 warm row with the 14 paper Random Forest features")
 	fmt.Println("  aggregate-cold        build ColdStartProfile records from raw InvocationSample JSONL datasets")
 	fmt.Println("  export-cold-csv       export a cold-start CSV dataset from ColdStartProfile JSONL")
 }
