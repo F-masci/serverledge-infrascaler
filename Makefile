@@ -40,6 +40,7 @@ push-images:
 test:
 	$(GO) test -v $(shell $(GO) list ./... | grep -Ev 'internal/container|examples')
 	$(GO) test -v -count=1 -timeout=2m ./internal/test -args -platform-profile=lb
+	$(GO) test -v -count=1 -timeout=2m ./internal/test -args -platform-profile=edge
 
 # Runs only unit tests
 unit-test:

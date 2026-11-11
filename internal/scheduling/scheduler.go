@@ -172,7 +172,7 @@ func handleCloudOffload(r *scheduledRequest) {
 		log.Printf("No remote offloading target available; dropping request")
 		r.decisionChannel <- schedDecision{action: DROP}
 		// TODO check if this is a correct assumption to make
-	} else if offloadingTarget.IsLoadBalancer || r.Fun.SupportsArch(node.LocalNode.Arch) {
+	} else if offloadingTarget.IsLoadBalancer || r.Fun.SupportsArch(offloadingTarget.Arch) {
 		handleOffload(r, offloadingTarget.APIUrl())
 	} else {
 		dropRequest(r)

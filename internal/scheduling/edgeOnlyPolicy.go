@@ -36,9 +36,11 @@ func (p *EdgePolicy) OnArrival(r *scheduledRequest) {
 			// E.g.: r.Fun.SupportedArchs = {"amd64"}, but all nNeighbors are arm-based.
 
 			tryLocalExecution(r)
+			return
 		}
 	} else {
 		tryLocalExecution(r)
+		return
 	}
 	dropRequest(r) // r.CanDoOffloading == true, NoSuitableNode == true && fallBackLocally == false leads here, so we drop
 	// the request in that case
@@ -58,4 +60,5 @@ func tryLocalExecution(r *scheduledRequest) {
 		execLocally(r, containerID, warm)
 		return
 	}
+	dropRequest(r)
 }
