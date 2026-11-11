@@ -3,6 +3,7 @@ package node
 import (
 	"errors"
 	"log"
+	"math"
 	"time"
 
 	"github.com/serverledge-faas/serverledge/internal/config"
@@ -187,6 +188,9 @@ func AcquireResourcesForNewContainer(fun *function.Function, forWarmPool bool) b
 	LocalResources.Lock()
 	defer LocalResources.Unlock()
 
+	if fun.CPUDemand <= 0 || math.IsNaN(fun.CPUDemand) || math.IsInf(fun.CPUDemand, 0) || fun.MemoryMB < 1 {
+		return false
+	}
 	if LocalResources.AvailableCPUs() < fun.CPUDemand {
 		return false
 	}

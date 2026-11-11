@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"regexp"
 	"runtime"
@@ -163,6 +164,10 @@ func CreateOrUpdateFunction(c echo.Context) error {
 	if err != nil && err != io.EOF {
 		log.Printf("Could not parse request: %v\n", err)
 		return err
+	}
+
+	if f.CPUDemand <= 0 || math.IsNaN(f.CPUDemand) || math.IsInf(f.CPUDemand, 0) {
+		return c.String(http.StatusUnprocessableEntity, "Invalid CPU limit")
 	}
 
 	pattern := getFunctionTagPatternForAPI(&f)

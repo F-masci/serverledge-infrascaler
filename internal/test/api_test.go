@@ -4,11 +4,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"net/http"
+	"net/http/httptest"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/labstack/echo/v4"
+	"github.com/serverledge-faas/serverledge/internal/api"
 	"github.com/serverledge-faas/serverledge/internal/container"
 	"github.com/serverledge-faas/serverledge/internal/function"
 	"github.com/serverledge-faas/serverledge/internal/node"
@@ -296,6 +301,28 @@ func TestMismatchingArchNoOffload(t *testing.T) {
 	deleteApiTest(t, name, HOST, PORT)
 }
 
+// TestFunctionAPIRejectsNonPositiveCPU covers #2 at the HTTP handler boundary.
+// A zero or negative CPU limit must return 422 before looking up the function or
+// contacting Docker; otherwise invalid declarations can corrupt CPU accounting.
+func TestFunctionAPIRejectsNonPositiveCPU(t *testing.T) {
+	for _, cpu := range []string{"0", "-1"} {
+		t.Run(cpu, func(t *testing.T) {
+			// The update route bypasses the creation conflict check; the CPU value is
+			// the only invalid field and must be rejected before any persistence.
+			req := httptest.NewRequest(http.MethodPost, "/update", strings.NewReader(`{"Name":"cpu-test","Runtime":"python314","MemoryMB":128,"CPUDemand":`+cpu+`}`))
+			rec := httptest.NewRecorder()
+			ctx := echo.New().NewContext(req, rec)
+			ctx.SetPath("/update")
+			if err := api.CreateOrUpdateFunction(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if rec.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("expected 422, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
 // TestWarmCPURejectionPreservesIdleContainer checks #1 against the shared pool.
 // Dedicated containers are returned to idle in a known order. A CPU rejection
 // must preserve inventory and accounting, and later reuse must remain LIFO.
@@ -421,5 +448,23 @@ func TestAsyncCreationFailureReleasesResourcesBeforeCallback(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("error callback blocked")
+	}
+}
+
+// TestInvalidCPUReservationIsRejected complements HTTP validation for #2.
+// Direct callers can supply NaN or infinity. Invalid demand must leave the
+// existing shared counters unchanged, without reinitializing LocalResources.
+func TestInvalidCPUReservationIsRejected(t *testing.T) {
+	requirePlatformProfile(t, "default")
+	waitForIdlePool(t)
+	before := readPoolUsage()
+	for _, cpu := range []float64{0, -1, math.NaN(), math.Inf(1), math.Inf(-1)} {
+		f := &function.Function{Name: "invalid-cpu", CPUDemand: cpu, MemoryMB: 1}
+		if node.AcquireResourcesForNewContainer(f, false) {
+			t.Errorf("accepted invalid CPU demand %v", cpu)
+		}
+		if after := readPoolUsage(); !samePoolUsage(after, before) {
+			t.Errorf("invalid CPU demand %v changed reservations: %+v", cpu, after)
+		}
 	}
 }
