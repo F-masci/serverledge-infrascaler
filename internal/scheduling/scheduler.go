@@ -71,7 +71,7 @@ func Run(p Policy) {
 					}
 				}
 				outputSize := len(c.report.Result)
-				metrics.AddFunctionOutputSizeValue(r.Fun.Name, float64(outputSize))
+				metrics.AddFunctionOutputSizeValue(c.funcName, float64(outputSize))
 			}
 		}
 	}
