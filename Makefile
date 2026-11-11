@@ -50,7 +50,32 @@ test:
 unit-test:
 	go test -v -short ./internal/container/... ./internal/lb/...
 
-.PHONY: serverledge serverledge-cli serverledge-profiling lb executor test unit-test integration-test images
+
+# Generates combined coverage from unit and integration tests
+coverage:
+	@set -eu; \
+	tmp=$$(mktemp -d); \
+	trap 'rm -rf "$$tmp"' EXIT; \
+	packages="$$( $(GO) list ./... | grep -v '/examples' )"; \
+	coverpkg="$$(printf '%s\n' "$$packages" | paste -sd, -)"; \
+	flags="-v -p 1 -count=1 -covermode=atomic -coverpkg=$$coverpkg"; \
+	$(GO) test $$flags -coverprofile="$$tmp/base.out" $$packages; \
+	$(GO) test $$flags -timeout=2m -coverprofile="$$tmp/lb.out" ./internal/test -args -platform-profile=lb; \
+	$(GO) test $$flags -timeout=2m -coverprofile="$$tmp/lb-random.out" -run '^TestGeneralLoadBalancer' ./internal/test -args -platform-profile=lb -lb-test-mode=Random; \
+	$(GO) test $$flags -timeout=2m -coverprofile="$$tmp/lb-mab.out" -run '^TestGeneralLoadBalancer' ./internal/test -args -platform-profile=lb -lb-test-mode=MAB; \
+	$(GO) test $$flags -timeout=2m -coverprofile="$$tmp/edge.out" ./internal/test -args -platform-profile=edge; \
+	$(GO) test $$flags -timeout=2m -coverprofile="$$tmp/executor.out" ./internal/test -args -platform-profile=executor; \
+	$(GO) test $$flags -timeout=2m -coverprofile="$$tmp/discovery.out" ./internal/test -args -platform-profile=discovery; \
+	awk 'FNR == 1 { next } \
+	     { key = $$1 " " $$2; counts[key] += $$3 } \
+	     END { print "mode: atomic"; \
+	           for (key in counts) print key, counts[key] }' \
+	     "$$tmp"/*.out > coverage.out
+
+	@$(GO) tool cover -func=coverage.out | tail -n 1
+
+
+.PHONY: serverledge serverledge-cli serverledge-profiling lb executor test unit-test coverage integration-test images
 
 clean:
 	@test -n "$(BIN)" && [ -d "$(BIN)" ] && rm -rf $(BIN) || { echo "Invalid BIN directory: $(BIN)"; exit 1; } && go clean -testcache

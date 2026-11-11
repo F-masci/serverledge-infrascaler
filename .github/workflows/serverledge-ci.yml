@@ -27,14 +27,8 @@ jobs:
       - name: Build project
         run: make
 
-      - name: Run unit tests
-        run: make unit-test
-
-      - name: Run tests
-        run: make test
-
-      - name: Generate coverage
-        run: go test ./... -coverprofile=coverage.out
+      - name: Run tests with coverage
+        run: make coverage
 
       - name: Upload coverage
         uses: actions/upload-artifact@v7.0.2
