@@ -42,6 +42,7 @@ test:
 	$(GO) test -v -count=1 -timeout=2m ./internal/test -args -platform-profile=lb
 	$(GO) test -v -count=1 -timeout=2m ./internal/test -args -platform-profile=edge
 	$(GO) test -v -count=1 -timeout=2m ./internal/test -args -platform-profile=executor
+	$(GO) test -v -count=1 -timeout=2m ./internal/test -args -platform-profile=discovery
 
 # Runs only unit tests
 unit-test:

@@ -419,7 +419,7 @@ func computeNearestNeighbors(nNeighbors int) {
 		return
 	}
 
-	var distanceBuf = make([]dist, len(neighborInfo)) //distances from current server
+	var distanceBuf = make([]dist, 0, len(neighborInfo)) //distances from current server
 	for key, s := range neighborInfo {
 		distanceBuf = append(distanceBuf, dist{key, VivaldiClient.DistanceTo(&s.Coordinates)})
 	}
