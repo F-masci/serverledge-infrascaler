@@ -5,15 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"testing"
-
-	"github.com/serverledge-faas/serverledge/internal/node"
+	"time"
 
 	"github.com/serverledge-faas/serverledge/internal/cli"
 	"github.com/serverledge-faas/serverledge/internal/client"
 	"github.com/serverledge-faas/serverledge/internal/function"
+	"github.com/serverledge-faas/serverledge/internal/node"
 	"github.com/serverledge-faas/serverledge/internal/workflow"
 	"github.com/serverledge-faas/serverledge/utils"
 )
@@ -412,4 +413,53 @@ func GetIntSingleResult(cer *workflow.ExecutionReport) (int, error) {
 		}
 	}
 	return 0, fmt.Errorf("there is not exactly one result: there are %d result(s)", len(cer.Result))
+}
+
+// requirePlatformProfile makes dependencies on the selected suite explicit.
+// A case in another profile is skipped rather than starting a second platform.
+func requirePlatformProfile(t *testing.T, expected string) {
+	t.Helper()
+	if *platformProfile != expected {
+		t.Skipf("requires a fresh run with -args -platform-profile=%s", expected)
+	}
+}
+
+// poolUsage is a consistent snapshot of public resource counters. Tests compare
+// before/after values instead of clearing pools belonging to the shared server.
+type poolUsage struct {
+	freeMemory      int64
+	availableMemory int64
+	usedCPU         float64
+	availableCPU    float64
+}
+
+func readPoolUsage() poolUsage {
+	node.LocalResources.RLock()
+	defer node.LocalResources.RUnlock()
+	return poolUsage{node.LocalResources.FreeMemory(), node.LocalResources.AvailableMemory(), node.LocalResources.UsedCPUs(), node.LocalResources.AvailableCPUs()}
+}
+
+func samePoolUsage(left, right poolUsage) bool {
+	return left.freeMemory == right.freeMemory && left.availableMemory == right.availableMemory && math.Abs(left.usedCPU-right.usedCPU) < 1e-9 && math.Abs(left.availableCPU-right.availableCPU) < 1e-9
+}
+
+// waitForIdlePool waits for completion notifications from preceding invocations.
+// The scheduler releases resources asynchronously after returning client results.
+func waitForIdlePool(t *testing.T) {
+	t.Helper()
+	waitForPlatformCondition(t, "the shared pool to finish active invocations", 5*time.Second, func() bool { return math.Abs(readPoolUsage().usedCPU) < 1e-9 })
+}
+
+// waitForPlatformCondition waits for a public effect of an asynchronous operation.
+// It avoids fixed startup sleeps while keeping failures bounded and explainable.
+func waitForPlatformCondition(t *testing.T, description string, timeout time.Duration, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", description)
 }
