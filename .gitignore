@@ -5,6 +5,8 @@ __pycache__*
 images/*/executor
 *.backup
 default.etcd
+.vscode/
+.sonarlint/
 
 # Local profiling infrastructure.
 scripts/profiling-nodes.local.conf
