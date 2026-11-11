@@ -304,7 +304,11 @@ func dismissContainer(requiredMemoryMB int64) (bool, error) {
 
 		if len(funPool.idle) > 0 {
 			for _, cont := range funPool.idle {
-				memory, _ := container.GetMemoryMB(cont.ID)
+				memory, err := container.GetMemoryMB(cont.ID)
+				if err != nil || memory <= 0 {
+					log.Printf("Cannot read memory for idle container %s: %v", cont.ID, err)
+					continue
+				}
 
 				// We collect the pointer to the container and the pool reference
 				containerToDismiss = append(containerToDismiss,
@@ -321,14 +325,12 @@ func dismissContainer(requiredMemoryMB int64) (bool, error) {
 cleanup: // Phase 2: Cleanup
 	if cleanedMB >= requiredMemoryMB { // if we'd actually free enough memory we do it, otherwise there's no point
 		for _, item := range containerToDismiss {
-			if item.pool.removeContainerFromIdle(item.cont) {
-				// Destroy the actual container resources (Docker/Containerd)
-				err := destroyContainerWithLifecycle(item.cont.ID, containerPoolFunctionName(item.pool), "memory_pressure")
-				if err != nil {
-					return false, err
-				}
-				LocalResources.warmPoolUsedMem -= item.memory
+			// Keep pool membership and RAM reserved until destruction succeeds.
+			if err := destroyContainerWithLifecycle(item.cont.ID, containerPoolFunctionName(item.pool), "memory_pressure"); err != nil {
+				return false, err
 			}
+			item.pool.removeContainerFromIdle(item.cont)
+			LocalResources.warmPoolUsedMem -= item.memory
 		}
 	} else {
 		log.Printf("Not enough containers to free up at least %d MB (avail to dismiss: %d)", requiredMemoryMB, cleanedMB)
@@ -358,24 +360,20 @@ func DeleteExpiredContainer() {
 
 		for _, warm := range pool.idle {
 			if now > warm.ExpirationTime {
-				// remove the expired container
-
-				// Update resources
-				memory, _ := container.GetMemoryMB(warm.ID)
-				LocalResources.warmPoolUsedMem -= memory
-
-				// Destroy the actual container
-				err := destroyContainerWithLifecycle(warm.ID, containerPoolFunctionName(pool), "expired")
-				if err != nil {
-					log.Printf("Error while destroying container %s: %s\n", warm.ID, err)
+				memory, err := container.GetMemoryMB(warm.ID)
+				if err == nil && memory > 0 {
+					err = destroyContainerWithLifecycle(warm.ID, containerPoolFunctionName(pool), "expired")
+					if err == nil {
+						LocalResources.warmPoolUsedMem -= memory
+						continue
+					}
 				}
-
-			} else {
-				// container is still valid: Keep it
-				// Rewrite the element at the 'kept' position
-				pool.idle[kept] = warm
-				kept++ // position to write the (eventual) next container we need to keep
+				log.Printf("Keeping expired container %s after cleanup failure (memory=%d): %v", warm.ID, memory, err)
 			}
+
+			// Failed cleanup retains both the container and its RAM reservation.
+			pool.idle[kept] = warm
+			kept++
 		}
 
 		// finally, we set as nil the references to the containers we deleted
