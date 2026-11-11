@@ -36,11 +36,6 @@ var NodeMetrics = &NodeMetricCache{
 	metrics: make(map[string]NodeMetric),
 }
 
-// ArchitectureCacheLB This map will cache the architecture chosen previously to try and maximize the use of warm containers of targets
-var ArchitectureCacheLB = &ArchitectureCache{
-	cache: make(map[string]ArchitectureCacheEntry),
-}
-
 type NodeMetric struct {
 	TotalMemoryMB int64
 	FreeMemoryMB  int64
@@ -60,16 +55,6 @@ func (c *NodeMetricCache) GetMetric(nodeName string) (NodeMetric, bool) {
 
 	metric, ok := c.metrics[nodeName]
 	return metric, ok
-}
-
-type ArchitectureCacheEntry struct {
-	Arch      string
-	Timestamp int64
-}
-
-type ArchitectureCache struct {
-	mu    sync.RWMutex
-	cache map[string]ArchitectureCacheEntry
 }
 
 // Update info about memory of a specific node. If totalMemMB = 0, then we keep the previous value.
@@ -108,53 +93,6 @@ func (c *NodeMetricCache) GetFreeMemory(nodeName string) int64 {
 
 	return val.FreeMemoryMB
 }
-
-/* Old implementation
-// Calculate the avg utilization of each architecture
-func (b *ArchitectureAwareBalancer) calculateSystemContext() *mab.Context {
-
-	archs := []string{container.ARM, container.X86}
-	usageMap := make(map[string]float64)
-
-	for _, arch := range archs {
-		var totalFree int64 = 0
-		var totalCap int64 = 0
-
-		var nodes []*middleware.ProxyTarget
-		if arch == container.ARM {
-			nodes = b.armRing.GetAllTargets()
-		} else {
-			nodes = b.x86Ring.GetAllTargets()
-		}
-
-		if len(nodes) == 0 {
-			usageMap[arch] = 100.0 // If no node let's assume it's full. This architecture will not be used anyway.
-			continue
-		}
-
-		for _, node := range nodes {
-
-			NodeMetrics.mu.RLock() // Assumo tu abbia reso pubblico il mutex o aggiunto un metodo Getter completo
-			metric, ok := NodeMetrics.metrics[node.Name]
-			NodeMetrics.mu.RUnlock()
-
-			if ok && metric.TotalMemoryMB > 0 {
-				totalFree += metric.FreeMemoryMB
-				totalCap += metric.TotalMemoryMB
-			} else {
-				log.Printf("[AALB] Node %s has a TotalMemoryMB attribute = 0. It wasn't initialized correctly?\n", node.Name)
-				panic(0) // it should never happen
-			}
-		}
-
-		used := float64(totalCap - totalFree)
-		usageMap[arch] = used / float64(totalCap) // % utilization (0.0 - 1.0) fort this specific architecture
-
-	}
-
-	return &mab.Context{ArchMemUsage: usageMap}
-}
-*/
 
 // Calculate the avg utilization and normalized cost profile of each MAB arm.
 //

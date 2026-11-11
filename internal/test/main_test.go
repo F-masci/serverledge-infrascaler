@@ -35,9 +35,12 @@ const PORT = 1323
 // never relaunch their own binary or replace a running scheduler.
 var platformProfile = flag.String("platform-profile", "default", "test environment: default, edge, lb, discovery, executor")
 
+// lbTestMode selects the routing strategy once, before the LB profile starts.
+var lbTestMode = flag.String("lb-test-mode", "RoundRobin", "LB test selection: RoundRobin, Random, MAB")
+
 var profileCases = map[string][]string{
 	"edge":      {"TestEdgeOnlyLocalRejectionsComplete"},
-	"lb":        {"TestTargetRefreshPollsOnceAndReplacesChangedMetadata"},
+	"lb":        {"TestTargetRefreshPollsOnceAndReplacesChangedMetadata", "TestGeneralLoadBalancer"},
 	"discovery": {"TestNearestNeighborsContainOnlyRegisteredNodes"},
 	"executor":  {"TestExecutorRetryPreservesRequestBody"},
 }
@@ -74,6 +77,9 @@ func (p *readySchedulingPolicy) Init() {
 // selection is intersected with those roots, preserving an optional subtest filter.
 // Default-profile tests keep ordinary Go discovery and run selection unchanged.
 func selectProfileCases() error {
+	if *platformProfile == "lb" && *lbTestMode != "RoundRobin" && *lbTestMode != "Random" && *lbTestMode != "MAB" {
+		return fmt.Errorf("unknown LB test mode %q", *lbTestMode)
+	}
 	if *platformProfile == "default" {
 		return nil
 	}
@@ -168,6 +174,7 @@ func runPlatformTests(m *testing.M) int {
 		}
 		defer registration.Deregister()
 		if *platformProfile == "lb" {
+			viper.Set(config.LB_MODE, *lbTestMode)
 			mab.InitBanditManager()
 		}
 		if *platformProfile == "discovery" {

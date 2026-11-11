@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -18,11 +19,14 @@ import (
 
 	"github.com/hexablock/vivaldi"
 	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 	"github.com/serverledge-faas/serverledge/internal/api"
+	"github.com/serverledge-faas/serverledge/internal/cache"
 	"github.com/serverledge-faas/serverledge/internal/container"
 	"github.com/serverledge-faas/serverledge/internal/executor"
 	"github.com/serverledge-faas/serverledge/internal/function"
 	"github.com/serverledge-faas/serverledge/internal/lb"
+	"github.com/serverledge-faas/serverledge/internal/mab"
 	"github.com/serverledge-faas/serverledge/internal/node"
 	"github.com/serverledge-faas/serverledge/internal/registration"
 	"github.com/serverledge-faas/serverledge/internal/scheduling"
@@ -726,5 +730,283 @@ func TestNearestNeighborsContainOnlyRegisteredNodes(t *testing.T) {
 			keys[peer.Key] = true
 		}
 		return keys["near"] && keys["far"]
+	})
+}
+
+// lbTargetSpec separates the routing pool from the node's physical architecture.
+// Multiple tags may share one architecture; this is the contract that the retired
+// fixed ARM/x86 balancer could not represent.
+type lbTargetSpec struct {
+	name string
+	tag  string
+	arch string
+}
+
+// generalLBFixture exercises the public balancer with HTTP status responses.
+// Resource admission uses the real metric cache and MemoryChecker, rather than
+// replacing private hash rings with a test-only implementation.
+type generalLBFixture struct {
+	balancer *lb.GeneralLoadBalancer
+	targets  []*middleware.ProxyTarget
+	endpoint *url.URL
+}
+
+func newGeneralLBFixture(t *testing.T, specs ...lbTargetSpec) *generalLBFixture {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/status" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(registration.StatusInformation{TotalMemory: 1000000, AvailableMemory: 1000000, TotalCPU: 1000, LastUpdateTime: time.Now().Unix()})
+	}))
+	t.Cleanup(server.Close)
+	endpoint, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := &generalLBFixture{endpoint: endpoint}
+	for _, spec := range specs {
+		fixture.targets = append(fixture.targets, fixture.target(t, spec))
+	}
+	fixture.balancer = lb.NewGeneralLoadBalancer(fixture.targets)
+	// Remove only these targets and metrics before closing the status responder.
+	t.Cleanup(func() {
+		for _, target := range fixture.targets {
+			fixture.balancer.RemoveTarget(target.Name)
+		}
+	})
+	return fixture
+}
+
+func (f *generalLBFixture) target(t *testing.T, spec lbTargetSpec) *middleware.ProxyTarget {
+	t.Helper()
+	metadata := echo.Map{"arch": spec.arch}
+	if spec.tag != "" {
+		metadata["machine_tag"] = spec.tag
+	}
+	return &middleware.ProxyTarget{Name: strings.ReplaceAll(t.Name(), "/", "-") + "-" + spec.name, URL: f.endpoint, Meta: metadata}
+}
+
+func (f *generalLBFixture) add(t *testing.T, spec lbTargetSpec) *middleware.ProxyTarget {
+	t.Helper()
+	target := f.target(t, spec)
+	if !f.balancer.AddTarget(target) {
+		t.Fatalf("cannot add target %s", target.Name)
+	}
+	f.targets = append(f.targets, target)
+	return target
+}
+
+func generalLBFunction(t *testing.T, architectures []string, pattern string) *function.Function {
+	t.Helper()
+	fun := &function.Function{Name: "general-" + strings.ReplaceAll(t.Name(), "/", "-"), SupportedArchs: architectures, TagPattern: pattern, MemoryMB: 1, CPUDemand: 0.001}
+	// Cache the function explicitly: selection should not depend on an etcd lookup.
+	cache.GetCacheInstance().Set(fun.Name, fun, time.Minute)
+	t.Cleanup(func() { cache.GetCacheInstance().Delete(fun.Name) })
+	return fun
+}
+
+func (f *generalLBFixture) invoke(t *testing.T, fun *function.Function) *middleware.ProxyTarget {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodPost, "/invoke/"+fun.Name, nil)
+	context := echo.New().NewContext(request, httptest.NewRecorder())
+	context.SetPath("/invoke/" + fun.Name)
+	target := f.balancer.Next(context)
+	// These tests select targets but do not execute functions. Close a pending MAB
+	// selection without reward feedback so successful selections do not leak InFlight.
+	if decision, ok := mab.GlobalDecisionStorage.RetrieveAndDelete(request.Header.Get("Serverledge-MAB-Request-ID")); ok {
+		mab.GlobalBanditManager.GetBandit(decision.FunctionName).ResolveSelection(decision.SelectedArm, "", decision.Context, nil, nil)
+	}
+	return target
+}
+
+func (f *generalLBFixture) ordinary() *middleware.ProxyTarget {
+	context := echo.New().NewContext(httptest.NewRequest(http.MethodGet, "/health", nil), httptest.NewRecorder())
+	context.SetPath("/health")
+	return f.balancer.Next(context)
+}
+
+func setLBResources(target *middleware.ProxyTarget, memory int64, cpu float64) {
+	lb.NodeMetrics.Update(target.Name, memory, 1000000, time.Now().Unix(), cpu)
+}
+
+// TestGeneralLoadBalancer replaces the retired fixed-ring suite using public APIs.
+// Construction, mutation, hashing, compatibility and fallback are checked against
+// three pools, including two different pools with the same physical architecture.
+// The profile selects RoundRobin, Random or MAB once before the suite starts.
+func TestGeneralLoadBalancer(t *testing.T) {
+	requirePlatformProfile(t, "lb")
+	specs := []lbTargetSpec{{"arm", "arm/tiny", "arm64"}, {"x86-small", "x86/tiny", "amd64"}, {"x86-large", "x86/large", "amd64"}}
+	t.Run("dynamic_rings", func(t *testing.T) {
+		fixture := newGeneralLBFixture(t, specs...)
+		tags := map[string]bool{}
+		// Non-invocation routing visits every nonempty tag, even in MAB/Random mode.
+		for i := 0; i < 3; i++ {
+			target := fixture.ordinary()
+			if target == nil {
+				t.Fatal("missing target in nonempty pool")
+			}
+			tags[target.Meta["machine_tag"].(string)] = true
+		}
+		if len(tags) != 3 {
+			t.Fatalf("expected three distinct pools, got %v", tags)
+		}
+	})
+	t.Run("add_remove", func(t *testing.T) {
+		fixture := newGeneralLBFixture(t, specs...)
+		fourth := fixture.add(t, lbTargetSpec{"gpu", "x86/gpu", "amd64"})
+		tags := map[string]bool{}
+		for i := 0; i < 4; i++ {
+			target := fixture.ordinary()
+			if target == nil {
+				t.Fatal("missing dynamically added pool")
+			}
+			tags[target.Meta["machine_tag"].(string)] = true
+		}
+		if len(tags) != 4 {
+			t.Fatalf("expected four pools after addition, got %v", tags)
+		}
+		for _, target := range fixture.targets[:3] {
+			if !fixture.balancer.RemoveTarget(target.Name) {
+				t.Fatalf("could not remove %s", target.Name)
+			}
+		}
+		for i := 0; i < 4; i++ {
+			if got := fixture.ordinary(); got == nil || got.Name != fourth.Name {
+				t.Fatalf("empty rings were not skipped: %v", got)
+			}
+		}
+		if fixture.balancer.RemoveTarget("unknown-target") {
+			t.Fatal("unknown target reported as removed")
+		}
+	})
+	t.Run("architecture_compatibility", func(t *testing.T) {
+		for _, scenario := range []struct {
+			name, arch string
+			available  bool
+		}{{"arm", "arm64", true}, {"x86", "amd64", true}, {"unsupported", "s390x", false}} {
+			t.Run(scenario.name, func(t *testing.T) {
+				fixture := newGeneralLBFixture(t, specs...)
+				fun := generalLBFunction(t, []string{scenario.arch}, "")
+				target := fixture.invoke(t, fun)
+				if !scenario.available {
+					if target != nil {
+						t.Fatal("unsupported architecture received a target")
+					}
+					return
+				}
+				if target == nil || target.Meta["arch"] != scenario.arch {
+					t.Fatalf("selected incompatible architecture: %v", target)
+				}
+			})
+		}
+	})
+	t.Run("stable_hash_within_pool", func(t *testing.T) {
+		fixture := newGeneralLBFixture(t, specs...)
+		fixture.add(t, lbTargetSpec{"x86-large-second", "x86/large", "amd64"})
+		fun := generalLBFunction(t, []string{"amd64"}, "x86/large")
+		first := fixture.invoke(t, fun)
+		if first == nil {
+			t.Fatal("no compatible target")
+		}
+		// Pool selection can alternate for an unconstrained function. Pin one pool to
+		// verify the actual consistent-hash guarantee rather than accidental stickiness.
+		for i := 0; i < 20; i++ {
+			if target := fixture.invoke(t, fun); target == nil || target.Name != first.Name {
+				t.Fatalf("function mapping changed without ring mutation: %v", target)
+			}
+		}
+	})
+	t.Run("resource_fallback_within_ring", func(t *testing.T) {
+		fixture := newGeneralLBFixture(t, specs...)
+		second := fixture.add(t, lbTargetSpec{"arm-second", "arm/tiny", "arm64"})
+		first := fixture.targets[0]
+		fun := generalLBFunction(t, []string{"arm64"}, "arm/tiny")
+		setLBResources(first, 0, 1000)
+		setLBResources(second, 0, 1000)
+		if fixture.invoke(t, fun) != nil {
+			t.Fatal("selected a node without enough RAM")
+		}
+		setLBResources(second, 1000000, 1000)
+		if target := fixture.invoke(t, fun); target == nil || target.Name != second.Name {
+			t.Fatalf("did not use the only admitted node: %v", target)
+		}
+		setLBResources(second, 1000000, 0)
+		if fixture.invoke(t, fun) != nil {
+			t.Fatal("selected a node without enough CPU")
+		}
+		setLBResources(first, 1000000, 1000)
+		if target := fixture.invoke(t, fun); target == nil || target.Name != first.Name {
+			t.Fatalf("did not switch to the recovered node: %v", target)
+		}
+	})
+	t.Run("fallback_between_compatible_pools", func(t *testing.T) {
+		fixture := newGeneralLBFixture(t, specs...)
+		fun := generalLBFunction(t, []string{"arm64", "amd64"}, "")
+		setLBResources(fixture.targets[0], 0, 1000)
+		setLBResources(fixture.targets[1], 0, 1000)
+		// RoundRobin first prioritizes the unavailable ARM pool, forcing inter-pool
+		// fallback. Other modes must still return the sole admitted compatible node.
+		for i := 0; i < 6; i++ {
+			target := fixture.invoke(t, fun)
+			if target == nil || target.Name != fixture.targets[2].Name {
+				t.Fatalf("compatible pool fallback failed: %v", target)
+			}
+		}
+	})
+	t.Run("reject_incompatible_fallback", func(t *testing.T) {
+		fixture := newGeneralLBFixture(t, specs...)
+		fun := generalLBFunction(t, []string{"arm64"}, "")
+		setLBResources(fixture.targets[0], 0, 1000)
+		if fixture.invoke(t, fun) != nil {
+			t.Fatal("fell back to an incompatible architecture")
+		}
+		setLBResources(fixture.targets[0], 1000000, 1000)
+		if target := fixture.invoke(t, fun); target == nil || target.Name != fixture.targets[0].Name {
+			t.Fatalf("compatible recovery failed: %v", target)
+		}
+	})
+	t.Run("empty_rings", func(t *testing.T) {
+		fixture := newGeneralLBFixture(t, specs...)
+		for _, target := range fixture.targets {
+			fixture.balancer.RemoveTarget(target.Name)
+		}
+		fun := generalLBFunction(t, []string{"arm64", "amd64"}, "")
+		if fixture.invoke(t, fun) != nil || fixture.ordinary() != nil {
+			t.Fatal("removed nodes remained eligible")
+		}
+	})
+	t.Run("exact_tag_mask", func(t *testing.T) {
+		fixture := newGeneralLBFixture(t, specs...)
+		fun := generalLBFunction(t, []string{"amd64"}, "x86/large")
+		setLBResources(fixture.targets[2], 0, 1000)
+		if fixture.invoke(t, fun) != nil {
+			t.Fatal("fell back outside the requested tag")
+		}
+		setLBResources(fixture.targets[2], 1000000, 1000)
+		if target := fixture.invoke(t, fun); target == nil || target.Name != fixture.targets[2].Name {
+			t.Fatalf("did not use the required pool: %v", target)
+		}
+	})
+	t.Run("tag_pattern", func(t *testing.T) {
+		fixture := newGeneralLBFixture(t, specs...)
+		fun := generalLBFunction(t, []string{"arm64", "amd64"}, "x86/*")
+		for i := 0; i < 8; i++ {
+			target := fixture.invoke(t, fun)
+			if target == nil || !strings.HasPrefix(target.Meta["machine_tag"].(string), "x86/") {
+				t.Fatalf("ignored pool pattern: %v", target)
+			}
+		}
+	})
+	t.Run("architecture_metadata_without_tag", func(t *testing.T) {
+		// Older registrations may omit machine_tag. The general balancer already
+		// supports falling back to arch metadata; removing the old class must retain it.
+		fixture := newGeneralLBFixture(t, lbTargetSpec{"arch-only", "", "arm64"})
+		fun := generalLBFunction(t, []string{"arm64"}, "")
+		if target := fixture.invoke(t, fun); target == nil || target.Name != fixture.targets[0].Name {
+			t.Fatalf("architecture-only registration no longer routes: %v", target)
+		}
 	})
 }

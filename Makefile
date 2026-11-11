@@ -40,6 +40,8 @@ push-images:
 test:
 	$(GO) test -v $(shell $(GO) list ./... | grep -Ev 'internal/container|examples')
 	$(GO) test -v -count=1 -timeout=2m ./internal/test -args -platform-profile=lb
+	$(GO) test -v -count=1 -timeout=2m -run '^TestGeneralLoadBalancer' ./internal/test -args -platform-profile=lb -lb-test-mode=Random
+	$(GO) test -v -count=1 -timeout=2m -run '^TestGeneralLoadBalancer' ./internal/test -args -platform-profile=lb -lb-test-mode=MAB
 	$(GO) test -v -count=1 -timeout=2m ./internal/test -args -platform-profile=edge
 	$(GO) test -v -count=1 -timeout=2m ./internal/test -args -platform-profile=executor
 	$(GO) test -v -count=1 -timeout=2m ./internal/test -args -platform-profile=discovery
