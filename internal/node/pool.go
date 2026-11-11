@@ -104,16 +104,14 @@ func acquireWarmContainer(f *function.Function) (*container.Container, error) {
 		}
 	}
 
-	// 2. try to pick a idle container
-	c, found := fp.popIdleContainer()
-	if !found {
+	// Check capacity before removing an idle container from its pool.
+	if len(fp.idle) == 0 {
 		return nil, NoWarmFoundErr
 	}
-
 	if LocalResources.AvailableCPUs() < f.CPUDemand {
-		//log.Printf("Not enough CPU to start a warm container for %s", f)
 		return nil, OutOfResourcesErr
 	}
+	c, _ := fp.popIdleContainer()
 	LocalResources.busyPoolUsedMem += f.MemoryMB
 	LocalResources.warmPoolUsedMem -= f.MemoryMB
 	LocalResources.usedCPUs += f.CPUDemand
@@ -216,8 +214,13 @@ func NewContainerWithAcquiredResources(fun *function.Function, startAsIdle bool,
 	LocalResources.Lock()
 	defer LocalResources.Unlock()
 	if err != nil {
-		LocalResources.busyPoolUsedMem -= fun.MemoryMB
-		LocalResources.usedCPUs -= fun.CPUDemand
+		// Undo the same reservation made by AcquireResourcesForNewContainer.
+		if startAsIdle {
+			LocalResources.warmPoolUsedMem -= fun.MemoryMB
+		} else {
+			LocalResources.busyPoolUsedMem -= fun.MemoryMB
+			LocalResources.usedCPUs -= fun.CPUDemand
+		}
 		return nil, err
 	}
 
@@ -240,17 +243,17 @@ func NewContainerWithAcquiredResourcesAsync(fun *function.Function, okCallback f
 		cont, err := container.CreateContainer(fun, false)
 		if err != nil {
 			log.Printf("Failed container creation: %v\n", err)
+			LocalResources.Lock()
+			LocalResources.busyPoolUsedMem -= fun.MemoryMB
+			LocalResources.usedCPUs -= fun.CPUDemand
+			LocalResources.Unlock()
+			// Notify only after releasing the reservation and its lock.
 			errCallback(err)
 			return
 		}
 
 		LocalResources.Lock()
 		defer LocalResources.Unlock()
-		if err != nil {
-			LocalResources.busyPoolUsedMem -= fun.MemoryMB
-			LocalResources.usedCPUs -= fun.CPUDemand
-			return
-		}
 
 		fp := GetContainerPool(fun)
 		cont.RequestsCount = 1
