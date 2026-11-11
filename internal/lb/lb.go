@@ -198,55 +198,59 @@ func updateTargets(balancer middleware.ProxyBalancer, region string) {
 			continue // otherwise we update everything with a nil target array, removing all targets from the LB list!
 		}
 
-		toKeep := make([]bool, len(currentTargets))
-		for i := range currentTargets {
-			toKeep[i] = false
-		}
-		for _, t := range targets {
-			toAdd := true
-			for i, curr := range currentTargets {
-				if curr.Name == t.Name {
-					toKeep[i] = true
-					toAdd = false
-					// Since we're keeping this node, we'll update it's free memory info.
-					nodeInfo := GetSingleTargetInfo(curr)
-					if nodeInfo != nil {
-						totalMemory := nodeInfo.TotalMemory
-						availableMemoryMb := nodeInfo.AvailableMemory
-						freeCpu := nodeInfo.TotalCPU - nodeInfo.UsedCPU
-						NodeMetrics.Update(curr.Name, availableMemoryMb, totalMemory, nodeInfo.LastUpdateTime, freeCpu)
-					}
-
-				}
-			}
-			if toAdd {
-				log.Printf("Adding %s\n", t.Name)
-				balancer.AddTarget(t)
-			}
-		}
-
-		toRemove := make([]string, 0)
-		for i, curr := range currentTargets {
-			if !toKeep[i] {
-				log.Printf("Removing %s\n", curr.Name)
-				toRemove = append(toRemove, curr.Name)
-			} else {
-				// If we keep this node, then we'll update its info about free memory
-				nodeInfo := GetSingleTargetInfo(curr)
-				if nodeInfo != nil {
-					totalMemory := nodeInfo.TotalMemory
-					availableMemoryMb := nodeInfo.AvailableMemory
-					freeCpu := nodeInfo.TotalCPU - nodeInfo.UsedCPU
-					NodeMetrics.Update(curr.Name, availableMemoryMb, totalMemory, nodeInfo.LastUpdateTime, freeCpu)
-				}
-			}
-		}
-		for _, curr := range toRemove {
-			balancer.RemoveTarget(curr)
-		}
-
-		currentTargets = targets
+		refreshTargets(balancer, targets)
 	}
+}
+
+// refreshTargets reconciles discovered endpoints and polls each retained target once.
+func refreshTargets(balancer middleware.ProxyBalancer, targets []*middleware.ProxyTarget) {
+	toKeep := make([]bool, len(currentTargets))
+	refreshed := make([]bool, len(currentTargets))
+	for i := range currentTargets {
+		toKeep[i] = false
+	}
+	for _, t := range targets {
+		toAdd := true
+		for i, curr := range currentTargets {
+			if curr.Name == t.Name {
+				// A name can be reused with a different endpoint or routing metadata.
+				if curr.URL.String() != t.URL.String() || getTargetArch(curr) != getTargetArch(t) || getTargetMachineTag(curr) != getTargetMachineTag(t) {
+					balancer.RemoveTarget(curr.Name)
+					balancer.AddTarget(t)
+					refreshed[i] = true // AddTarget already fetches the new target status.
+				}
+				toKeep[i] = true
+				toAdd = false
+				break
+			}
+		}
+		if toAdd {
+			log.Printf("Adding %s\n", t.Name)
+			balancer.AddTarget(t)
+		}
+	}
+
+	toRemove := make([]string, 0)
+	for i, curr := range currentTargets {
+		if !toKeep[i] {
+			log.Printf("Removing %s\n", curr.Name)
+			toRemove = append(toRemove, curr.Name)
+		} else if !refreshed[i] {
+			// If we keep this node, then we'll update its info about free memory
+			nodeInfo := GetSingleTargetInfo(curr)
+			if nodeInfo != nil {
+				totalMemory := nodeInfo.TotalMemory
+				availableMemoryMb := nodeInfo.AvailableMemory
+				freeCpu := nodeInfo.TotalCPU - nodeInfo.UsedCPU
+				NodeMetrics.Update(curr.Name, availableMemoryMb, totalMemory, nodeInfo.LastUpdateTime, freeCpu)
+			}
+		}
+	}
+	for _, curr := range toRemove {
+		balancer.RemoveTarget(curr)
+	}
+
+	currentTargets = targets
 }
 
 func GetSingleTargetInfo(target *middleware.ProxyTarget) *registration.StatusInformation {

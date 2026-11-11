@@ -39,6 +39,7 @@ push-images:
 # Runs integration tests (all tests EXCEPT unit tests)
 test:
 	$(GO) test -v $(shell $(GO) list ./... | grep -Ev 'internal/container|examples')
+	$(GO) test -v -count=1 -timeout=2m ./internal/test -args -platform-profile=lb
 
 # Runs only unit tests
 unit-test:

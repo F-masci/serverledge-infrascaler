@@ -1,14 +1,18 @@
 package test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +20,7 @@ import (
 	"github.com/serverledge-faas/serverledge/internal/api"
 	"github.com/serverledge-faas/serverledge/internal/container"
 	"github.com/serverledge-faas/serverledge/internal/function"
+	"github.com/serverledge-faas/serverledge/internal/lb"
 	"github.com/serverledge-faas/serverledge/internal/node"
 	"github.com/serverledge-faas/serverledge/internal/workflow"
 	"github.com/serverledge-faas/serverledge/utils"
@@ -467,4 +472,112 @@ func TestInvalidCPUReservationIsRejected(t *testing.T) {
 			t.Errorf("invalid CPU demand %v changed reservations: %+v", cpu, after)
 		}
 	}
+}
+
+// publishTestPeer uses the registry's wire format instead of modifying private maps.
+// It returns the exact etcd key so tests can explicitly replace a same-name peer.
+func publishTestPeer(t *testing.T, area, name, tag, arch, address string, udpPort int) string {
+	t.Helper()
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := utils.GetEtcdClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := fmt.Sprintf("registry/%s/%s/%s", area, tag, name)
+	payload := fmt.Sprintf("%s;%s;%d;%s;%s", host, port, udpPort, arch, tag)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if _, err := client.Put(ctx, key, payload); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if _, err := client.Delete(ctx, key); err != nil {
+			t.Errorf("cannot remove test registration: %v", err)
+		}
+	})
+	return key
+}
+
+// TestTargetRefreshPollsOnceAndReplacesChangedMetadata covers #4 through the
+// running reverse proxy and etcd discovery. Consecutive retained-target polls
+// must belong to different refresh periods, and a same-name replacement must
+// receive both status queries and proxied traffic at its new URL and routing tag.
+func TestTargetRefreshPollsOnceAndReplacesChangedMetadata(t *testing.T) {
+	requirePlatformProfile(t, "lb")
+	polls := make(chan time.Time, 16)
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/status" {
+			polls <- time.Now()
+			io.WriteString(w, `{"TotalCPU":2,"AvailableMemory":1024,"TotalMemory":1024,"LastUpdateTime":1}`)
+			return
+		}
+		io.WriteString(w, "old-backend")
+	}))
+	defer backend.Close()
+	area := "lb-refresh-case"
+	oldKey := publishTestPeer(t, area, "refresh-target", "pool-a", "amd64", strings.TrimPrefix(backend.URL, "http://"), 0)
+	listener, err := net.Listen("tcp", HOST+":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := echo.New()
+	proxy.Listener = listener
+	go lb.StartReverseProxy(proxy, area)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := proxy.Shutdown(ctx); err != nil {
+			t.Errorf("cannot stop test proxy: %v", err)
+		}
+	})
+
+	// Construction polls once; the following two samples are periodic refreshes.
+	var samples []time.Time
+	for len(samples) < 3 {
+		select {
+		case instant := <-polls:
+			samples = append(samples, instant)
+		case <-time.After(3 * time.Second):
+			t.Fatal("load balancer did not refresh target status")
+		}
+	}
+	if gap := samples[2].Sub(samples[1]); gap < 800*time.Millisecond {
+		t.Fatalf("duplicate status queries within one refresh: gap=%v", gap)
+	}
+
+	var newPolls atomic.Int32
+	replacement := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/status" {
+			newPolls.Add(1)
+			io.WriteString(w, `{"TotalCPU":2,"AvailableMemory":1024,"TotalMemory":1024,"LastUpdateTime":2}`)
+			return
+		}
+		io.WriteString(w, "new-backend")
+	}))
+	defer replacement.Close()
+	client, err := utils.GetEtcdClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if _, err := client.Delete(ctx, oldKey); err != nil {
+		t.Fatal(err)
+	}
+	publishTestPeer(t, area, "refresh-target", "pool-b", "arm64", strings.TrimPrefix(replacement.URL, "http://"), 0)
+	probe := &http.Client{Timeout: time.Second}
+	waitForPlatformCondition(t, "new target routing and status", 4*time.Second, func() bool {
+		response, err := probe.Get("http://" + listener.Addr().String() + "/health")
+		if err != nil {
+			return false
+		}
+		defer response.Body.Close()
+		body, err := io.ReadAll(response.Body)
+		return err == nil && string(body) == "new-backend" && newPolls.Load() > 0
+	})
 }

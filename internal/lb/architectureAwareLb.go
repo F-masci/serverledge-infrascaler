@@ -264,7 +264,9 @@ func (b *ArchitectureAwareBalancer) RemoveTarget(name string) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	delete(NodeMetrics.metrics, name) // this is no longer needed
+	NodeMetrics.mu.Lock()
+	delete(NodeMetrics.metrics, name)
+	NodeMetrics.mu.Unlock()
 
 	if b.armRing.RemoveByName(name) {
 		return true
