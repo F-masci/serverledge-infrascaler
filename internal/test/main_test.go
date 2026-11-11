@@ -264,3 +264,12 @@ func teardownServerledge(server *echo.Echo) error {
 	errRegistry := registration.Deregister()
 	return u.ReturnNonNilErr(errServer, errRegistry)
 }
+
+// requirePlatformProfile makes dependencies on the selected suite explicit.
+// A case in another profile is skipped rather than starting a second platform.
+func requirePlatformProfile(t *testing.T, expected string) {
+	t.Helper()
+	if *platformProfile != expected {
+		t.Skipf("requires a fresh run with -args -platform-profile=%s", expected)
+	}
+}

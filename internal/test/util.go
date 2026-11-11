@@ -415,15 +415,6 @@ func GetIntSingleResult(cer *workflow.ExecutionReport) (int, error) {
 	return 0, fmt.Errorf("there is not exactly one result: there are %d result(s)", len(cer.Result))
 }
 
-// requirePlatformProfile makes dependencies on the selected suite explicit.
-// A case in another profile is skipped rather than starting a second platform.
-func requirePlatformProfile(t *testing.T, expected string) {
-	t.Helper()
-	if *platformProfile != expected {
-		t.Skipf("requires a fresh run with -args -platform-profile=%s", expected)
-	}
-}
-
 // poolUsage is a consistent snapshot of public resource counters. Tests compare
 // before/after values instead of clearing pools belonging to the shared server.
 type poolUsage struct {
