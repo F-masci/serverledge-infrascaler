@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"regexp"
 	"runtime"
@@ -73,6 +74,7 @@ func InvokeFunction(c echo.Context) error {
 	r.Params = invocationRequest.Params
 	r.Arrival = time.Now()
 	r.MaxRespT = invocationRequest.QoSMaxRespT
+	r.Class = invocationRequest.QoSClass
 	r.CanDoOffloading = invocationRequest.CanDoOffloading
 	r.Async = invocationRequest.Async
 	r.ReturnOutput = invocationRequest.ReturnOutput
@@ -108,7 +110,10 @@ func InvokeFunction(c echo.Context) error {
 	}
 
 	if r.Async {
-		go scheduling.SubmitAsyncRequest(r)
+		// The handler returns its pooled object before asynchronous execution ends.
+		// Give the worker a separate value; this also preserves the original request ID.
+		asyncRequest := *r
+		go scheduling.SubmitAsyncRequest(&asyncRequest)
 		setMetricsHeaders()
 		return c.JSON(http.StatusOK, function.AsyncResponse{ReqId: r.Id()})
 	}
@@ -163,6 +168,10 @@ func CreateOrUpdateFunction(c echo.Context) error {
 	if err != nil && err != io.EOF {
 		log.Printf("Could not parse request: %v\n", err)
 		return err
+	}
+
+	if f.CPUDemand <= 0 || math.IsNaN(f.CPUDemand) || math.IsInf(f.CPUDemand, 0) {
+		return c.String(http.StatusUnprocessableEntity, "Invalid CPU limit")
 	}
 
 	pattern := getFunctionTagPatternForAPI(&f)

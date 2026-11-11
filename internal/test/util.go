@@ -1,27 +1,62 @@
 package test
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"testing"
-
-	"github.com/serverledge-faas/serverledge/internal/node"
+	"time"
 
 	"github.com/serverledge-faas/serverledge/internal/cli"
 	"github.com/serverledge-faas/serverledge/internal/client"
 	"github.com/serverledge-faas/serverledge/internal/function"
+	"github.com/serverledge-faas/serverledge/internal/node"
 	"github.com/serverledge-faas/serverledge/internal/workflow"
 	"github.com/serverledge-faas/serverledge/utils"
 )
 
+// publishTestPeer uses the registry's wire format instead of modifying private maps.
+// It returns the exact etcd key so tests can explicitly replace a same-name peer.
+func publishTestPeer(t *testing.T, area, name, tag, arch, address string, udpPort int) string {
+	t.Helper()
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := utils.GetEtcdClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := fmt.Sprintf("registry/%s/%s/%s", area, tag, name)
+	payload := fmt.Sprintf("%s;%s;%d;%s;%s", host, port, udpPort, arch, tag)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if _, err := client.Put(ctx, key, payload); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if _, err := client.Delete(ctx, key); err != nil {
+			t.Errorf("cannot remove test registration: %v", err)
+		}
+	})
+	return key
+}
+
 const PY_MEMORY = 20
+
 const JS_MEMORY = 50
+
 const JAVA_MEMORY = 100
+
 const X86 = "amd64"
+
 const ARM = "arm64"
 
 func initializeExamplePyFunction() (*function.Function, error) {
@@ -412,4 +447,18 @@ func GetIntSingleResult(cer *workflow.ExecutionReport) (int, error) {
 		}
 	}
 	return 0, fmt.Errorf("there is not exactly one result: there are %d result(s)", len(cer.Result))
+}
+
+// waitForPlatformCondition waits for a public effect of an asynchronous operation.
+// It avoids fixed startup sleeps while keeping failures bounded and explainable.
+func waitForPlatformCondition(t *testing.T, description string, timeout time.Duration, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", description)
 }

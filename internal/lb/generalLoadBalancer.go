@@ -56,11 +56,9 @@ type GeneralLoadBalancer struct {
 	// whether the function supports the physical architecture required for execution.
 	tagToArch map[string]string
 
-	// architectures is the sorted/deterministic list of tags recognized by the balancer.
-	// It is used for round-robin load balancing across architectures/tags:
-	// Go does not guarantee a consistent order when iterating over maps, so without
-	// this slice, round-robin load balancing would be non-deterministic and experiments
-	// would not be reproducible.
+	// architectures retains tag discovery order for round-robin and fallback.
+	// This order is stable within the balancer, but can differ between starts
+	// because discovery may enumerate Go maps in a different order.
 	//
 	// It is updated in AddTarget whenever a new tag appears.
 	architectures []string
@@ -576,7 +574,9 @@ func (b *GeneralLoadBalancer) RemoveTarget(name string) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	delete(NodeMetrics.metrics, name) // this is no longer needed
+	NodeMetrics.mu.Lock()
+	delete(NodeMetrics.metrics, name)
+	NodeMetrics.mu.Unlock()
 
 	for _, tag := range b.architectures {
 		ring := b.rings[tag]

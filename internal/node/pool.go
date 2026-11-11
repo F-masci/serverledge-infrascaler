@@ -3,6 +3,7 @@ package node
 import (
 	"errors"
 	"log"
+	"math"
 	"time"
 
 	"github.com/serverledge-faas/serverledge/internal/config"
@@ -104,16 +105,14 @@ func acquireWarmContainer(f *function.Function) (*container.Container, error) {
 		}
 	}
 
-	// 2. try to pick a idle container
-	c, found := fp.popIdleContainer()
-	if !found {
+	// Check capacity before removing an idle container from its pool.
+	if len(fp.idle) == 0 {
 		return nil, NoWarmFoundErr
 	}
-
 	if LocalResources.AvailableCPUs() < f.CPUDemand {
-		//log.Printf("Not enough CPU to start a warm container for %s", f)
 		return nil, OutOfResourcesErr
 	}
+	c, _ := fp.popIdleContainer()
 	LocalResources.busyPoolUsedMem += f.MemoryMB
 	LocalResources.warmPoolUsedMem -= f.MemoryMB
 	LocalResources.usedCPUs += f.CPUDemand
@@ -189,6 +188,9 @@ func AcquireResourcesForNewContainer(fun *function.Function, forWarmPool bool) b
 	LocalResources.Lock()
 	defer LocalResources.Unlock()
 
+	if fun.CPUDemand <= 0 || math.IsNaN(fun.CPUDemand) || math.IsInf(fun.CPUDemand, 0) || fun.MemoryMB < 1 {
+		return false
+	}
 	if LocalResources.AvailableCPUs() < fun.CPUDemand {
 		return false
 	}
@@ -216,8 +218,13 @@ func NewContainerWithAcquiredResources(fun *function.Function, startAsIdle bool,
 	LocalResources.Lock()
 	defer LocalResources.Unlock()
 	if err != nil {
-		LocalResources.busyPoolUsedMem -= fun.MemoryMB
-		LocalResources.usedCPUs -= fun.CPUDemand
+		// Undo the same reservation made by AcquireResourcesForNewContainer.
+		if startAsIdle {
+			LocalResources.warmPoolUsedMem -= fun.MemoryMB
+		} else {
+			LocalResources.busyPoolUsedMem -= fun.MemoryMB
+			LocalResources.usedCPUs -= fun.CPUDemand
+		}
 		return nil, err
 	}
 
@@ -240,17 +247,17 @@ func NewContainerWithAcquiredResourcesAsync(fun *function.Function, okCallback f
 		cont, err := container.CreateContainer(fun, false)
 		if err != nil {
 			log.Printf("Failed container creation: %v\n", err)
+			LocalResources.Lock()
+			LocalResources.busyPoolUsedMem -= fun.MemoryMB
+			LocalResources.usedCPUs -= fun.CPUDemand
+			LocalResources.Unlock()
+			// Notify only after releasing the reservation and its lock.
 			errCallback(err)
 			return
 		}
 
 		LocalResources.Lock()
 		defer LocalResources.Unlock()
-		if err != nil {
-			LocalResources.busyPoolUsedMem -= fun.MemoryMB
-			LocalResources.usedCPUs -= fun.CPUDemand
-			return
-		}
 
 		fp := GetContainerPool(fun)
 		cont.RequestsCount = 1
@@ -297,7 +304,11 @@ func dismissContainer(requiredMemoryMB int64) (bool, error) {
 
 		if len(funPool.idle) > 0 {
 			for _, cont := range funPool.idle {
-				memory, _ := container.GetMemoryMB(cont.ID)
+				memory, err := container.GetMemoryMB(cont.ID)
+				if err != nil || memory <= 0 {
+					log.Printf("Cannot read memory for idle container %s: %v", cont.ID, err)
+					continue
+				}
 
 				// We collect the pointer to the container and the pool reference
 				containerToDismiss = append(containerToDismiss,
@@ -314,14 +325,12 @@ func dismissContainer(requiredMemoryMB int64) (bool, error) {
 cleanup: // Phase 2: Cleanup
 	if cleanedMB >= requiredMemoryMB { // if we'd actually free enough memory we do it, otherwise there's no point
 		for _, item := range containerToDismiss {
-			if item.pool.removeContainerFromIdle(item.cont) {
-				// Destroy the actual container resources (Docker/Containerd)
-				err := destroyContainerWithLifecycle(item.cont.ID, containerPoolFunctionName(item.pool), "memory_pressure")
-				if err != nil {
-					return false, err
-				}
-				LocalResources.warmPoolUsedMem -= item.memory
+			// Keep pool membership and RAM reserved until destruction succeeds.
+			if err := destroyContainerWithLifecycle(item.cont.ID, containerPoolFunctionName(item.pool), "memory_pressure"); err != nil {
+				return false, err
 			}
+			item.pool.removeContainerFromIdle(item.cont)
+			LocalResources.warmPoolUsedMem -= item.memory
 		}
 	} else {
 		log.Printf("Not enough containers to free up at least %d MB (avail to dismiss: %d)", requiredMemoryMB, cleanedMB)
@@ -351,24 +360,20 @@ func DeleteExpiredContainer() {
 
 		for _, warm := range pool.idle {
 			if now > warm.ExpirationTime {
-				// remove the expired container
-
-				// Update resources
-				memory, _ := container.GetMemoryMB(warm.ID)
-				LocalResources.warmPoolUsedMem -= memory
-
-				// Destroy the actual container
-				err := destroyContainerWithLifecycle(warm.ID, containerPoolFunctionName(pool), "expired")
-				if err != nil {
-					log.Printf("Error while destroying container %s: %s\n", warm.ID, err)
+				memory, err := container.GetMemoryMB(warm.ID)
+				if err == nil && memory > 0 {
+					err = destroyContainerWithLifecycle(warm.ID, containerPoolFunctionName(pool), "expired")
+					if err == nil {
+						LocalResources.warmPoolUsedMem -= memory
+						continue
+					}
 				}
-
-			} else {
-				// container is still valid: Keep it
-				// Rewrite the element at the 'kept' position
-				pool.idle[kept] = warm
-				kept++ // position to write the (eventual) next container we need to keep
+				log.Printf("Keeping expired container %s after cleanup failure (memory=%d): %v", warm.ID, memory, err)
 			}
+
+			// Failed cleanup retains both the container and its RAM reservation.
+			pool.idle[kept] = warm
+			kept++
 		}
 
 		// finally, we set as nil the references to the containers we deleted
