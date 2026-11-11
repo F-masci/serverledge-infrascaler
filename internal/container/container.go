@@ -163,10 +163,12 @@ func sendPostRequestWithRetries(url string, body *bytes.Buffer) (*http.Response,
 	var totalWaitMillis = 0
 	var attempts = 1
 
-	var err error
+	payload := append([]byte(nil), body.Bytes()...)
+	var lastErr error
 
 	for totalWaitMillis < TIMEOUT_MILLIS {
-		resp, err := http.Post(url, "application/json", body)
+		resp, err := http.Post(url, "application/json", bytes.NewReader(payload))
+		lastErr = err
 		if err == nil {
 			return resp, time.Duration(totalWaitMillis * int(time.Millisecond)), err
 		} else if attempts > 3 {
@@ -184,7 +186,7 @@ func sendPostRequestWithRetries(url string, body *bytes.Buffer) (*http.Response,
 		}
 	}
 
-	return nil, time.Duration(totalWaitMillis * int(time.Millisecond)), fmt.Errorf("exceeded max number of retries: %v", err)
+	return nil, time.Duration(totalWaitMillis * int(time.Millisecond)), fmt.Errorf("exceeded max number of retries: %v", lastErr)
 }
 
 func minInt(a, b int) int {

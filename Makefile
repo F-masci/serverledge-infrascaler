@@ -41,6 +41,7 @@ test:
 	$(GO) test -v $(shell $(GO) list ./... | grep -Ev 'internal/container|examples')
 	$(GO) test -v -count=1 -timeout=2m ./internal/test -args -platform-profile=lb
 	$(GO) test -v -count=1 -timeout=2m ./internal/test -args -platform-profile=edge
+	$(GO) test -v -count=1 -timeout=2m ./internal/test -args -platform-profile=executor
 
 # Runs only unit tests
 unit-test:
