@@ -1,11 +1,12 @@
 package test
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
-	"math"
+	"net"
 	"net/http"
 	"os"
 	"testing"
@@ -19,10 +20,43 @@ import (
 	"github.com/serverledge-faas/serverledge/utils"
 )
 
+// publishTestPeer uses the registry's wire format instead of modifying private maps.
+// It returns the exact etcd key so tests can explicitly replace a same-name peer.
+func publishTestPeer(t *testing.T, area, name, tag, arch, address string, udpPort int) string {
+	t.Helper()
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := utils.GetEtcdClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := fmt.Sprintf("registry/%s/%s/%s", area, tag, name)
+	payload := fmt.Sprintf("%s;%s;%d;%s;%s", host, port, udpPort, arch, tag)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if _, err := client.Put(ctx, key, payload); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if _, err := client.Delete(ctx, key); err != nil {
+			t.Errorf("cannot remove test registration: %v", err)
+		}
+	})
+	return key
+}
+
 const PY_MEMORY = 20
+
 const JS_MEMORY = 50
+
 const JAVA_MEMORY = 100
+
 const X86 = "amd64"
+
 const ARM = "arm64"
 
 func initializeExamplePyFunction() (*function.Function, error) {
@@ -413,32 +447,6 @@ func GetIntSingleResult(cer *workflow.ExecutionReport) (int, error) {
 		}
 	}
 	return 0, fmt.Errorf("there is not exactly one result: there are %d result(s)", len(cer.Result))
-}
-
-// poolUsage is a consistent snapshot of public resource counters. Tests compare
-// before/after values instead of clearing pools belonging to the shared server.
-type poolUsage struct {
-	freeMemory      int64
-	availableMemory int64
-	usedCPU         float64
-	availableCPU    float64
-}
-
-func readPoolUsage() poolUsage {
-	node.LocalResources.RLock()
-	defer node.LocalResources.RUnlock()
-	return poolUsage{node.LocalResources.FreeMemory(), node.LocalResources.AvailableMemory(), node.LocalResources.UsedCPUs(), node.LocalResources.AvailableCPUs()}
-}
-
-func samePoolUsage(left, right poolUsage) bool {
-	return left.freeMemory == right.freeMemory && left.availableMemory == right.availableMemory && math.Abs(left.usedCPU-right.usedCPU) < 1e-9 && math.Abs(left.availableCPU-right.availableCPU) < 1e-9
-}
-
-// waitForIdlePool waits for completion notifications from preceding invocations.
-// The scheduler releases resources asynchronously after returning client results.
-func waitForIdlePool(t *testing.T) {
-	t.Helper()
-	waitForPlatformCondition(t, "the shared pool to finish active invocations", 5*time.Second, func() bool { return math.Abs(readPoolUsage().usedCPU) < 1e-9 })
 }
 
 // waitForPlatformCondition waits for a public effect of an asynchronous operation.

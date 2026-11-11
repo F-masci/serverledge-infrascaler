@@ -1,11 +1,13 @@
 package test
 
-/// fc_test contains test that executes serverledge server-side function composition apis directly. Internally it uses __function__ REST API.
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/lithammer/shortuuid"
 	"github.com/serverledge-faas/serverledge/internal/function"
@@ -536,4 +538,206 @@ func TestResumeWorkflow(t *testing.T) {
 	// cleaning up function composition and function
 	err3 := wflow.Delete()
 	u.AssertNil(t, err3)
+}
+
+// TestCreateWorkflow tests the compose REST API that creates a new function composition
+func TestCreateWorkflow(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test")
+	}
+	fcName := "sequence"
+	oldW, found := workflow.Get(fcName)
+	if found {
+		oldW.Delete()
+	}
+
+	fn, err := InitializePyFunction("inc", "handler", function.NewSignature().
+		AddInput("n", function.Int{}).
+		AddOutput("n", function.Int{}).
+		Build())
+	u.AssertNilMsg(t, err, "failed to initialize function")
+	wflow, err := CreateSequenceWorkflow(fn, fn, fn)
+	wflow.Name = fcName
+	u.AssertNil(t, err)
+	err = createWorkflowApiTest(wflow, HOST, PORT)
+	if err != nil {
+		fmt.Println(err)
+		t.Fail()
+	}
+
+	// here we do not use REST API
+	getFC, b := workflow.Get(fcName)
+	u.AssertTrue(t, b)
+	u.AssertTrueMsg(t, wflow.Equals(getFC), "composition comparison failed")
+	err = wflow.Delete()
+	u.AssertNilMsg(t, err, "failed to delete composition")
+
+}
+
+// TestInvokeWorkflow tests the REST API that executes a given function composition
+func TestInvokeWorkflow(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test")
+	}
+	fcName := "sequence"
+	fn, err := initializeJsFunction("inc", function.NewSignature().
+		AddInput("n", function.Int{}).
+		AddOutput("n", function.Int{}).
+		Build())
+	u.AssertNilMsg(t, err, "failed to initialize function")
+	wflow, err := CreateSequenceWorkflow(fn, fn, fn)
+	wflow.Name = fcName
+	u.AssertNil(t, err)
+	err = createWorkflowApiTest(wflow, HOST, PORT)
+	if err != nil {
+		fmt.Println(err)
+		t.Fail()
+	}
+
+	// === this is the test ===
+	params := make(map[string]interface{})
+	params["n"] = 1
+	invokeWorkflowApiTest(t, params, fcName, HOST, PORT, false)
+
+	// here we do not use REST API
+	getFC, b := workflow.Get(fcName)
+	u.AssertTrue(t, b)
+	u.AssertTrueMsg(t, wflow.Equals(getFC), "composition comparison failed")
+	err = wflow.Delete()
+	u.AssertNilMsg(t, err, "failed to delete composition")
+
+}
+
+// TestInvokeWorkflow tests the REST API that executes a given function composition
+func TestInvokeWorkflow_DifferentFunctions(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test")
+	}
+	fcName := "sequence"
+	fnJs, err := initializeJsFunction("inc", function.NewSignature().
+		AddInput("n", function.Int{}).
+		AddOutput("n", function.Int{}).
+		Build())
+	u.AssertNilMsg(t, err, "failed to initialize javascript function")
+	fnPy, err := InitializePyFunction("double", "handler", function.NewSignature().
+		AddInput("n", function.Int{}).
+		AddOutput("n", function.Int{}).
+		Build())
+	u.AssertNilMsg(t, err, "failed to initialize python function")
+	wflow, err := CreateSequenceWorkflow(fnPy, fnJs, fnPy, fnJs)
+	wflow.Name = fcName
+	u.AssertNil(t, err)
+	err = createWorkflowApiTest(wflow, HOST, PORT)
+	if err != nil {
+		fmt.Println(err)
+		t.Fail()
+	}
+
+	// === this is the test ===
+	params := make(map[string]interface{})
+	params["n"] = 1
+	invokeWorkflowApiTest(t, params, fcName, HOST, PORT, false)
+
+	// here we do not use REST API
+	getFC, b := workflow.Get(fcName)
+	u.AssertTrue(t, b)
+	u.AssertTrueMsg(t, wflow.Equals(getFC), "composition comparison failed")
+	err = wflow.Delete()
+	u.AssertNilMsg(t, err, "failed to delete composition")
+
+}
+
+// TestDeleteWorkflow tests the compose REST API that deletes a function composition
+func TestDeleteWorkflow(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test")
+	}
+	fcName := "sequence"
+	fn, err := InitializePyFunction("inc", "handler", function.NewSignature().
+		AddInput("n", function.Int{}).
+		AddOutput("n", function.Int{}).
+		Build())
+	if err != nil {
+		fmt.Printf("inc creation failed: %v\n", err)
+		t.Fail()
+	}
+	db, err := InitializePyFunction("double", "handler", function.NewSignature().
+		AddInput("n", function.Int{}).
+		AddOutput("n", function.Int{}).
+		Build())
+	u.AssertNilMsg(t, err, "failed to initialize function")
+	wflow, err := CreateSequenceWorkflow(fn, db, fn)
+	wflow.Name = fcName
+	u.AssertNil(t, err)
+
+	err = wflow.Save()
+	u.AssertNil(t, err)
+
+	// the API under test is the following
+	deleteWorkflowApiTest(t, fcName, HOST, PORT)
+
+	list, err := workflow.GetAllWorkflows()
+	found := false
+	for _, w := range list {
+		if strings.Compare(w, wflow.Name) == 0 {
+			found = true
+		}
+	}
+	u.AssertFalse(t, found)
+}
+
+// TestAsyncInvokeWorkflow tests the REST API that executes a given function composition
+func TestAsyncInvokeWorkflow(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test")
+	}
+	fcName := "sequence"
+
+	fn, err := InitializePyFunction("inc", "handler", function.NewSignature().
+		AddInput("n", function.Int{}).
+		AddOutput("n", function.Int{}).
+		Build())
+	u.AssertNilMsg(t, err, "failed to initialize function")
+	wflow, err := CreateSequenceWorkflow(fn, fn, fn)
+	wflow.Name = fcName
+	u.AssertNil(t, err)
+	err = createWorkflowApiTest(wflow, HOST, PORT)
+	if err != nil {
+		fmt.Println(err)
+		t.Fail()
+	}
+
+	// === this is the test ===
+	params := make(map[string]interface{})
+	params["n"] = 1
+	invocationResult := invokeWorkflowApiTest(t, params, fcName, HOST, PORT, true)
+
+	reqIdStruct := &function.AsyncResponse{}
+
+	errUnmarshal := json.Unmarshal([]byte(invocationResult), reqIdStruct)
+	u.AssertNil(t, errUnmarshal)
+
+	// wait until the result is available
+	i := 0
+	for {
+		pollResult := pollWorkflowTest(t, reqIdStruct.ReqId, HOST, PORT)
+
+		var response workflow.InvocationResponse
+		errUnmarshalExecResult := json.Unmarshal([]byte(pollResult), &response)
+
+		if errUnmarshalExecResult != nil {
+			var unmarshalError *json.UnmarshalTypeError
+			if errors.As(errUnmarshalExecResult, &unmarshalError) {
+				u.AssertFalseMsg(t, true, errUnmarshalExecResult.Error())
+			}
+			i++
+			time.Sleep(200 * time.Millisecond)
+		} else {
+			u.AssertEquals(t, 4, cast.ToInt(response.Result["n"]))
+			break
+		}
+	}
+
+	err = wflow.Delete()
+	u.AssertNilMsg(t, err, "failed to delete composition")
 }

@@ -39,8 +39,21 @@ var platformProfile = flag.String("platform-profile", "default", "test environme
 var lbTestMode = flag.String("lb-test-mode", "RoundRobin", "LB test selection: RoundRobin, Random, MAB")
 
 var profileCases = map[string][]string{
-	"edge":      {"TestEdgeOnlyLocalRejectionsComplete"},
-	"lb":        {"TestTargetRefreshPollsOnceAndReplacesChangedMetadata", "TestGeneralLoadBalancer"},
+	"edge": {"TestEdgeOnlyLocalRejectionsComplete"},
+	"lb": {
+		"TestTargetRefreshPollsOnceAndReplacesChangedMetadata",
+		"TestGeneralLoadBalancerDynamicRings",
+		"TestGeneralLoadBalancerAddRemove",
+		"TestGeneralLoadBalancerArchitectureCompatibility",
+		"TestGeneralLoadBalancerStableHashWithinPool",
+		"TestGeneralLoadBalancerResourceFallbackWithinRing",
+		"TestGeneralLoadBalancerFallbackBetweenCompatiblePools",
+		"TestGeneralLoadBalancerRejectIncompatibleFallback",
+		"TestGeneralLoadBalancerEmptyRings",
+		"TestGeneralLoadBalancerExactTagMask",
+		"TestGeneralLoadBalancerTagPattern",
+		"TestGeneralLoadBalancerArchitectureMetadataWithoutTag",
+	},
 	"discovery": {"TestNearestNeighborsContainOnlyRegisteredNodes"},
 	"executor":  {"TestExecutorRetryPreservesRequestBody"},
 }
