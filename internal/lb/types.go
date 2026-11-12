@@ -14,8 +14,7 @@ const RR = "RoundRobin"
 
 var AllMemoryAvailable = int64(10_000_000) // A high value to symbolize all memory is free
 
-// MemoryChecker is the function that checks if the node selected has enough memory to execute the function.
-// it is an interface, and it's put in HashRing to make unit-tests possible by mocking it
+// MemoryChecker checks cached memory admission independently of CPU admission.
 type MemoryChecker interface {
 	HasEnoughMemory(target *middleware.ProxyTarget, fun *function.Function) bool
 }
@@ -23,13 +22,28 @@ type MemoryChecker interface {
 type DefaultMemoryChecker struct{}
 
 func (m *DefaultMemoryChecker) HasEnoughMemory(candidate *middleware.ProxyTarget, fun *function.Function) bool {
-	freeMemoryMB := NodeMetrics.GetFreeMemory(candidate.Name)
 	metric, ok := NodeMetrics.GetMetric(candidate.Name)
 	if !ok {
 		return true
 	}
-	log.Printf("Candidate has: %d MB free memory. Function needs: %d MB", freeMemoryMB, fun.MemoryMB)
-	return freeMemoryMB >= fun.MemoryMB && metric.FreeCPU >= fun.CPUDemand
+	log.Printf("Candidate %s memory: %d MB available; function %s requires %d MB", candidate.Name, metric.FreeMemoryMB, fun.Name, fun.MemoryMB)
+	return metric.FreeMemoryMB >= fun.MemoryMB
+}
+
+// CPUChecker checks cached CPU admission independently of memory admission.
+type CPUChecker interface {
+	HasEnoughCPU(target *middleware.ProxyTarget, fun *function.Function) bool
+}
+
+type DefaultCPUChecker struct{}
+
+func (c *DefaultCPUChecker) HasEnoughCPU(candidate *middleware.ProxyTarget, fun *function.Function) bool {
+	metric, ok := NodeMetrics.GetMetric(candidate.Name)
+	if !ok {
+		return true
+	}
+	log.Printf("Candidate %s CPU: %.3f available; function %s requires %.3f", candidate.Name, metric.FreeCPU, fun.Name, fun.CPUDemand)
+	return metric.FreeCPU >= fun.CPUDemand
 }
 
 var NodeMetrics = &NodeMetricCache{

@@ -14,8 +14,9 @@ type HashRing struct {
 	replicas int
 	ring     []uint32                           // actual ring with hash of nodes
 	targets  map[uint32]*middleware.ProxyTarget // mapping hash(es) <-> node. Each node will have #replicas entries in the ring
-	// function to check if the node selected has enough memory to execute the function
+	// function to check if the node selected has enough memory and CPU to execute the function
 	targetList []*middleware.ProxyTarget // list of target. Cached instead of iterating on targets every time.
+	cpuChecker CPUChecker                // implemented this way to make the code testable by mocking this struct/function.
 	memChecker MemoryChecker             // implemented this way to make the code testable by mocking this struct/function.
 
 }
@@ -28,6 +29,7 @@ func NewHashRing(replicas int) *HashRing {
 		targets:    make(map[uint32]*middleware.ProxyTarget),
 		targetList: make([]*middleware.ProxyTarget, 0),
 		memChecker: &DefaultMemoryChecker{},
+		cpuChecker: &DefaultCPUChecker{},
 	}
 }
 
@@ -56,11 +58,11 @@ func (r *HashRing) Get(fun *function.Function) *middleware.ProxyTarget {
 	}
 	candidate := r.targets[r.ring[idx]] // here we use the map to get the node corresponding to the hash
 
-	if r.memChecker.HasEnoughMemory(candidate, fun) && fun.SupportsArch(candidate.Meta["arch"].(string)) {
+	if r.hasEnoughResources(candidate, fun) && fun.SupportsArch(candidate.Meta["arch"].(string)) {
 		return candidate
 	}
 
-	// If the node found by consistent hashing doesn't have enough memory, we'll try to find another node to execute the function
+	// If the node found by consistent hashing doesn't have enough resources, we'll try to find another node to execute the function
 	// by navigating the ring, so that the lookup order is consistent between different executions (if the nodes' pool doesn't change
 	// of course).
 	startingIdx := idx            // idx is still set to the candidate index in the ring
@@ -69,7 +71,7 @@ func (r *HashRing) Get(fun *function.Function) *middleware.ProxyTarget {
 	// since there are multiple replicas of every physical node, I'll keep track of nodes already considered as candiadates
 	// to skip them and make the lookup faster.
 	// E.g.: if the first candidate was node "Node-A", found by its replica "Node-A#1", there is no point in trying to see
-	// if "Node-A" has enough memory once I find it through its replica "Node-A#2", for example, that I may find while
+	// if "Node-A" has enough resources once I find it through its replica "Node-A#2", for example, that I may find while
 	// traversing the ring.
 	seen := make(map[string]struct{})
 	seen[candidate.Name] = struct{}{} // I already tried it
@@ -78,7 +80,7 @@ func (r *HashRing) Get(fun *function.Function) *middleware.ProxyTarget {
 		candidate = r.targets[r.ring[idx]]     // new candidate: idx is the replica's index. candidate is the corresponding physical node
 		_, alreadySeen := seen[candidate.Name] // I check if it's in the map (meaning I already tried it)
 
-		if !alreadySeen && r.memChecker.HasEnoughMemory(candidate, fun) && fun.SupportsArch(candidate.Meta["arch"].(string)) {
+		if !alreadySeen && r.hasEnoughResources(candidate, fun) && fun.SupportsArch(candidate.Meta["arch"].(string)) {
 			return candidate
 		} else {
 			seen[candidate.Name] = struct{}{} // it's a map, it doesn't really matter if alreadySeen was true or not, there are no duplicates
@@ -88,6 +90,13 @@ func (r *HashRing) Get(fun *function.Function) *middleware.ProxyTarget {
 
 	return nil // no suitable node found
 
+}
+
+// Evaluate both checks so logs report CPU and memory even when one is insufficient.
+func (r *HashRing) hasEnoughResources(candidate *middleware.ProxyTarget, fun *function.Function) bool {
+	memoryOK := r.memChecker.HasEnoughMemory(candidate, fun)
+	cpuOK := r.cpuChecker.HasEnoughCPU(candidate, fun)
+	return memoryOK && cpuOK
 }
 
 func (r *HashRing) RemoveByName(name string) bool {
