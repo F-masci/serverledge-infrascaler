@@ -94,10 +94,13 @@ func InvokeFunction(c echo.Context) error {
 		// These headers will be used by the Load Balancer (if there is one), to get fresh updates on the free
 		// memory of each node after the execution of every function.
 		c.Response().Header().Set("Serverledge-Node-Name", node.LocalNode.Key)
+		node.LocalResources.RLock()
 		freeMem := node.LocalResources.AvailableMemory()
+		freeCPU := node.LocalResources.AvailableCPUs()
+		node.LocalResources.RUnlock()
 		c.Response().Header().Set("Serverledge-Free-Mem", fmt.Sprintf("%d", freeMem))
 		c.Response().Header().Set("Serverledge-Timestamp", fmt.Sprintf("%d", time.Now().Unix()))
-		c.Response().Header().Set("Serverledge-Free-CPU", fmt.Sprintf("%f", node.LocalResources.AvailableCPUs()))
+		c.Response().Header().Set("Serverledge-Free-CPU", fmt.Sprintf("%f", freeCPU))
 		c.Response().Header().Set("Serverledge-Node-Arch", runtime.GOARCH) // used by the MAB to update correct arm
 		if reqID := c.Request().Header.Get("Serverledge-MAB-Request-ID"); reqID != "" {
 			c.Response().Header().Set("Serverledge-MAB-Request-ID", reqID)
