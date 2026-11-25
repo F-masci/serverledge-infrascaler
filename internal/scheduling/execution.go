@@ -138,6 +138,7 @@ func Execute(cont *container.Container, r *scheduledRequest, isWarm bool) error 
 			fmt.Printf("Failed to get log: %v\n", errLog)
 		}
 
+		node.HandleCompletion(cont, r.Fun)
 		completions <- &completionNotification{
 			funcName:  r.Fun.Name,
 			offloaded: r.offloaded,
@@ -149,6 +150,7 @@ func Execute(cont *container.Container, r *scheduledRequest, isWarm bool) error 
 	}
 
 	if response == nil || !response.Success {
+		node.HandleCompletion(cont, r.Fun)
 		completions <- &completionNotification{
 			funcName:  r.Fun.Name,
 			offloaded: r.offloaded,
@@ -161,6 +163,7 @@ func Execute(cont *container.Container, r *scheduledRequest, isWarm bool) error 
 
 	r.Result = response.Result
 	r.Output = response.Output
+	node.HandleCompletion(cont, r.Fun)
 	completions <- &completionNotification{
 		funcName:  r.Fun.Name,
 		offloaded: r.offloaded,

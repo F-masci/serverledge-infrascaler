@@ -59,7 +59,8 @@ func Run(p Policy) {
 				log.Printf("Function %s not found", c.funcName)
 				continue
 			}
-			node.HandleCompletion(c.cont, f)
+			// Resource release (node.HandleCompletion) already ran synchronously in Execute
+			// before notifying completions, so HTTP response headers see updated free resources.
 			p.OnCompletion(f, &c.report)
 
 			if metrics.Enabled && !c.failed {
