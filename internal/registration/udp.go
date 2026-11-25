@@ -65,14 +65,25 @@ func handleUDPConnection(conn *net.UDPConn) {
 }
 
 func getCurrentStatusInformation() (status []byte, err error) {
+	node.LocalResources.RLock()
+	totalMem := node.LocalResources.TotalMemory()
+	totalCPU := node.LocalResources.TotalCPUs()
+	availMem := node.LocalResources.AvailableMemory()
+	freeMem := node.LocalResources.FreeMemory()
+	usedCPU := node.LocalResources.UsedCPUs()
+	node.LocalResources.RUnlock()
+
+	acceptsOffload := config.GetString(config.SCHEDULING_POLICY, "default") != "cloudonly"
+
 	response := StatusInformation{
 		AvailableWarmContainers: node.WarmStatus(),
-		TotalMemory:             node.LocalResources.TotalMemory(),
-		TotalCPU:                node.LocalResources.TotalCPUs(),
-		AvailableMemory:         node.LocalResources.AvailableMemory(),
-		FreeMemory:              node.LocalResources.FreeMemory(),
-		UsedCPU:                 node.LocalResources.UsedCPUs(),
+		TotalMemory:             totalMem,
+		TotalCPU:                totalCPU,
+		AvailableMemory:         availMem,
+		FreeMemory:              freeMem,
+		UsedCPU:                 usedCPU,
 		Coordinates:             *VivaldiClient.GetCoordinate(),
+		AcceptsOffload:          acceptsOffload,
 	}
 
 	return json.Marshal(response)

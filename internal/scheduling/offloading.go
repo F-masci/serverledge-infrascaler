@@ -44,7 +44,7 @@ func pickEdgeNodeForOffloading(r *scheduledRequest) (url string, err error) {
 
 	for _, nodeReg := range nearestNeighbors {
 		status, ok := neighborStatus[nodeReg.Key]
-		if !ok {
+		if !ok || !status.AcceptsOffload {
 			continue
 		}
 		if r.Fun.SupportsArch(nodeReg.Arch) && status.AvailableMemory > maxMem {
@@ -80,6 +80,8 @@ func Offload(r *scheduledRequest, serverUrl string) error {
 		return err
 	}
 	if resp.StatusCode != http.StatusOK {
+		// TODO: invalidate offloadingCache[r.Fun.Name] on offload failure (and guard cache maps with a mutex)
+		// so a saturated or unreachable neighbor is not pinned for the full offloading.cache.validity window.
 		if resp.StatusCode == http.StatusTooManyRequests {
 			return node.OutOfResourcesErr
 		}

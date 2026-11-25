@@ -28,4 +28,5 @@ type StatusInformation struct {
 	Coordinates             vivaldi.Coordinate
 	LoadAvg                 []float64
 	LastUpdateTime          int64
+	AcceptsOffload          bool
 }

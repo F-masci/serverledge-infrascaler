@@ -404,25 +404,37 @@ func updateRemoteOffloadingTarget() {
 	}
 }
 
-// computeNearestNeighbors finds servers nearby to the current one
+// computeNearestNeighbors finds servers nearby to the current one that accept offloaded invocations
 func computeNearestNeighbors(nNeighbors int) {
 	type dist struct {
 		key      string
 		distance time.Duration
 	}
 
-	if nNeighbors > len(neighborInfo) {
-		nearestNeighbors = make([]NodeRegistration, 0, len(neighborInfo))
-		for _, n := range neighbors {
-			nearestNeighbors = append(nearestNeighbors, n)
+	var distanceBuf = make([]dist, 0, len(neighborInfo)) // distances from current server
+	for key, s := range neighborInfo {
+		if !s.AcceptsOffload {
+			continue
+		}
+		if _, ok := neighbors[key]; !ok {
+			continue
+		}
+		distanceBuf = append(distanceBuf, dist{key, VivaldiClient.DistanceTo(&s.Coordinates)})
+	}
+
+	if len(distanceBuf) == 0 {
+		nearestNeighbors = nil
+		return
+	}
+
+	if nNeighbors >= len(distanceBuf) {
+		nearestNeighbors = make([]NodeRegistration, 0, len(distanceBuf))
+		for _, entry := range distanceBuf {
+			nearestNeighbors = append(nearestNeighbors, neighbors[entry.key])
 		}
 		return
 	}
 
-	var distanceBuf = make([]dist, 0, len(neighborInfo)) //distances from current server
-	for key, s := range neighborInfo {
-		distanceBuf = append(distanceBuf, dist{key, VivaldiClient.DistanceTo(&s.Coordinates)})
-	}
 	sort.Slice(distanceBuf, func(i, j int) bool { return distanceBuf[i].distance < distanceBuf[j].distance })
 
 	nearestNeighbors = make([]NodeRegistration, nNeighbors)
