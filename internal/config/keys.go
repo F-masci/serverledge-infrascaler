@@ -35,6 +35,9 @@ const OFFLOADING_CACHE_VALIDITY = "offloading.cache.validity"
 // local CPU architecture (optional; auto-detected otherwise)
 const NODE_ARCHITECTURE = "node.architecture"
 
+// maximum time (seconds) to wait for in-flight requests during graceful drain
+const NODE_DRAIN_TIMEOUT_S = "node.drain.timeout"
+
 // cache capacity
 const CACHE_SIZE = "cache.size"
 

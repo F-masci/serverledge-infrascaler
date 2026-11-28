@@ -1,13 +1,13 @@
 package api
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/serverledge-faas/serverledge/internal/metrics"
@@ -16,8 +16,6 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/serverledge-faas/serverledge/internal/cache"
 	"github.com/serverledge-faas/serverledge/internal/config"
-	"github.com/serverledge-faas/serverledge/internal/node"
-	"github.com/serverledge-faas/serverledge/internal/registration"
 	"github.com/serverledge-faas/serverledge/internal/scheduling"
 )
 
@@ -32,6 +30,8 @@ func StartAPIServer(e *echo.Echo) {
 	e.GET("/function", GetFunctions)
 	e.GET("/poll/:reqId", PollAsyncResult)
 	e.GET("/status", GetServerStatus)
+	e.POST("/drain", DrainNode)
+	e.GET("/drain", GetDrainStatus)
 	e.POST("/prewarm", PrewarmFunction)
 
 	if config.GetBool(config.METRICS_ENABLED, false) {
@@ -79,32 +79,14 @@ func CacheSetup() {
 }
 
 func RegisterTerminationHandler(e *echo.Echo) {
-	c := make(chan os.Signal)
-	signal.Notify(c, os.Interrupt)
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 
 	go func() {
-		select {
-		case sig := <-c:
-			fmt.Printf("Got %s signal. Terminating...\n", sig)
-			node.ShutdownAllContainers()
-
-			// deregister from etcd; server should be unreachable
-			err := registration.Deregister()
-			if err != nil {
-				log.Fatal(err)
-			}
-
-			//stop container janitor
-			node.StopJanitor()
-
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			if err := e.Shutdown(ctx); err != nil {
-				e.Logger.Fatal(err)
-			}
-
-			os.Exit(0)
-		}
+		sig := <-c
+		fmt.Printf("Got %s signal. Draining and terminating...\n", sig)
+		GracefulShutdown(e, defaultDrainTimeout())
+		os.Exit(0)
 	}()
 }
 

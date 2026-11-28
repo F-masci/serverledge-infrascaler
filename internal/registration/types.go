@@ -29,4 +29,6 @@ type StatusInformation struct {
 	LoadAvg                 []float64
 	LastUpdateTime          int64
 	AcceptsOffload          bool
+	Draining                bool
+	InFlightRequests        int64
 }

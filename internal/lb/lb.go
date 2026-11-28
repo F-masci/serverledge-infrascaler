@@ -2,6 +2,7 @@ package lb
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -142,7 +143,13 @@ func StartReverseProxy(e *echo.Echo, region string) {
 	// the system does not panic but instead returns an HTTP response with status code 429 – Too Many Requests
 	e.Use(proxyErrorMiddleware)
 	e.Use(middleware.ProxyWithConfig(proxyConfig))
-	go updateTargets(balancer, region)
+
+	watchCtx, cancelWatch := context.WithCancel(context.Background())
+	defer cancelWatch()
+	if e.Server != nil {
+		e.Server.RegisterOnShutdown(cancelWatch)
+	}
+	go updateTargets(watchCtx, balancer, region)
 
 	portNumber := config.GetInt(config.API_PORT, 1323)
 	if err := e.Start(fmt.Sprintf(":%d", portNumber)); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -186,24 +193,61 @@ func getTargets(region string) ([]*middleware.ProxyTarget, error) {
 	return targets, nil
 }
 
-func updateTargets(balancer middleware.ProxyBalancer, region string) {
-	var sleepTime = config.GetInt(config.LB_REFRESH_INTERVAL, 30)
+// updateTargets keeps the load balancer's target list synchronized with etcd in
+// a single goroutine (avoiding concurrent writes to currentTargets). It combines
+// immediate membership reconciliation driven by etcd watch events with a periodic
+// full refresh that also updates cached CPU/memory metrics for retained nodes.
+func updateTargets(ctx context.Context, balancer middleware.ProxyBalancer, region string) {
+	sleepTime := config.GetInt(config.LB_REFRESH_INTERVAL, 30)
+	if sleepTime <= 0 {
+		sleepTime = 30
+	}
+	ticker := time.NewTicker(time.Duration(sleepTime) * time.Second)
+	defer ticker.Stop()
+
+	watchEvents, err := registration.WatchAreaNodes(ctx, region)
+	if err != nil {
+		log.Printf("[LB]: Cannot start etcd watch for area %s, falling back to periodic polling: %v\n", region, err)
+	}
+
 	for {
-		time.Sleep(time.Duration(sleepTime) * time.Second)
-		log.Printf("[LB]: Periodic targets update\n")
-
-		targets, err := getTargets(region)
-		if err != nil {
-			log.Printf("Cannot update targets: %v\n", err)
-			continue // otherwise we update everything with a nil target array, removing all targets from the LB list!
+		select {
+		case <-ctx.Done():
+			// Proxy is shutting down; stop the background reconciliation loop cleanly.
+			return
+		case _, ok := <-watchEvents:
+			// Immediate membership change (node join/leave/metadata change) from etcd watch.
+			if !ok {
+				// Watch channel closed; disable this branch and keep periodic polling active.
+				watchEvents = nil
+				continue
+			}
+			log.Printf("[LB]: Membership change detected via etcd watch\n")
+			targets, err := getTargets(region)
+			if err != nil {
+				log.Printf("Cannot update targets after watch event: %v\n", err)
+				continue
+			}
+			// Reconcile membership immediately without re-polling /status on unchanged targets.
+			reconcileTargets(balancer, targets, false)
+		case <-ticker.C:
+			// Periodic safety-net reconciliation and /status refresh for retained targets.
+			log.Printf("[LB]: Periodic targets update\n")
+			targets, err := getTargets(region)
+			if err != nil {
+				log.Printf("Cannot update targets: %v\n", err)
+				continue // otherwise we update everything with a nil target array, removing all targets from the LB list!
+			}
+			reconcileTargets(balancer, targets, true)
 		}
-
-		refreshTargets(balancer, targets)
 	}
 }
 
-// refreshTargets reconciles discovered endpoints and polls each retained target once.
-func refreshTargets(balancer middleware.ProxyBalancer, targets []*middleware.ProxyTarget) {
+// reconcileTargets reconciles discovered endpoints against currentTargets.
+// When pollRetained is true, retained targets whose metadata did not change have
+// their /status refreshed once; watch-driven updates pass pollRetained=false so
+// membership changes take effect immediately without redundant status polling.
+func reconcileTargets(balancer middleware.ProxyBalancer, targets []*middleware.ProxyTarget, pollRetained bool) {
 	toKeep := make([]bool, len(currentTargets))
 	refreshed := make([]bool, len(currentTargets))
 	for i := range currentTargets {
@@ -235,7 +279,7 @@ func refreshTargets(balancer middleware.ProxyBalancer, targets []*middleware.Pro
 		if !toKeep[i] {
 			log.Printf("Removing %s\n", curr.Name)
 			toRemove = append(toRemove, curr.Name)
-		} else if !refreshed[i] {
+		} else if pollRetained && !refreshed[i] {
 			// If we keep this node, then we'll update its info about free memory
 			nodeInfo := GetSingleTargetInfo(curr)
 			if nodeInfo != nil {

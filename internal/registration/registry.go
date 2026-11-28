@@ -18,7 +18,7 @@ import (
 
 	"github.com/serverledge-faas/serverledge/internal/config"
 	"github.com/serverledge-faas/serverledge/utils"
-	"go.etcd.io/etcd/client/v3"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"golang.org/x/net/context"
 )
 
@@ -40,6 +40,8 @@ var SelfRegistration *NodeRegistration
 
 var etcdClient *clientv3.Client = nil
 var etcdLease clientv3.LeaseID
+var leaseMu sync.Mutex
+var stopKeepAlive chan struct{}
 
 func (r *NodeRegistration) routingTag() string {
 	if r.NodeID.MachineTag != "" {
@@ -90,7 +92,14 @@ func registerToEtcd(asLoadBalancer bool) error {
 		log.Fatalf("Could not grant lease: %v", err)
 		return err
 	}
+	leaseMu.Lock()
+	if stopKeepAlive != nil {
+		close(stopKeepAlive)
+	}
 	etcdLease = resp.ID
+	stopCh := make(chan struct{})
+	stopKeepAlive = stopCh
+	leaseMu.Unlock()
 
 	registeredLocalIP := config.GetString(config.API_IP, defaultAddressStr)
 	apiPort := config.GetInt(config.API_PORT, 1323)
@@ -130,15 +139,18 @@ func registerToEtcd(asLoadBalancer bool) error {
 		return IdRegistrationErr
 	}
 
-	go func() {
+	go func(stop <-chan struct{}, leaseID clientv3.LeaseID) {
 		ticker := time.NewTicker(etcdLeaseTTL * 0.75 * time.Second)
+		defer ticker.Stop()
 		for {
 			select {
+			case <-stop:
+				return
 			case <-ticker.C:
-				keepAliveLease()
+				keepAliveLease(leaseID)
 			}
 		}
-	}()
+	}(stopCh, resp.ID)
 
 	return nil
 }
@@ -152,8 +164,15 @@ func RegisterLoadBalancer() error {
 	return registerToEtcd(true)
 }
 
-func keepAliveLease() {
-	_, err := etcdClient.KeepAliveOnce(context.Background(), etcdLease)
+func keepAliveLease(leaseID clientv3.LeaseID) {
+	leaseMu.Lock()
+	client := etcdClient
+	active := etcdLease == leaseID && leaseID != 0
+	leaseMu.Unlock()
+	if !active || client == nil {
+		return
+	}
+	_, err := client.KeepAliveOnce(context.Background(), leaseID)
 	if err != nil {
 		log.Printf("Error keeping alive lease: %v", err)
 	}
@@ -276,14 +295,101 @@ func GetLBInArea(area string) (map[string]NodeRegistration, error) {
 	return servers, nil
 }
 
+// IsRegistered reports whether this process currently holds an active etcd registration lease.
+func IsRegistered() bool {
+	leaseMu.Lock()
+	defer leaseMu.Unlock()
+	return etcdLease != 0
+}
+
+// Deregister revokes this process's etcd lease idempotently and stops lease keep-alives.
 func Deregister() error {
-	ctx, _ := context.WithTimeout(context.Background(), 1*time.Second)
-	_, err := etcdClient.Revoke(ctx, etcdLease)
+	leaseMu.Lock()
+	client := etcdClient
+	leaseID := etcdLease
+	if stopKeepAlive != nil {
+		close(stopKeepAlive)
+		stopKeepAlive = nil
+	}
+	etcdLease = 0
+	leaseMu.Unlock()
+
+	if client == nil || leaseID == 0 {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err := client.Revoke(ctx, leaseID)
 	if err != nil {
 		log.Printf("Error revoking lease: %v", err)
+		return err
 	}
 
 	return nil
+}
+
+// WatchAreaNodes watches etcd membership changes (PUT/DELETE) for worker nodes
+// in the given area, ignoring load balancer keys under __lb.
+// The returned channel receives a signal whenever membership changes and is
+// closed when ctx is canceled.
+func WatchAreaNodes(ctx context.Context, area string) (<-chan struct{}, error) {
+	client, err := utils.GetEtcdClient()
+	if err != nil {
+		return nil, err
+	}
+
+	baseDir := areaEtcdKey(area)
+	lbPrefix := path.Join(baseDir, registryLoadBalancerDirectory)
+	// Buffer size 1 coalesces bursts of rapid etcd events into a single pending
+	// notification without blocking the watch goroutine.
+	events := make(chan struct{}, 1)
+
+	go func() {
+		defer close(events)
+		// Outer loop re-establishes the watch if etcd cancels the stream due to
+		// a transient error while ctx is still active.
+		for {
+			if ctx.Err() != nil {
+				return
+			}
+			watchCh := client.Watch(ctx, baseDir, clientv3.WithPrefix())
+			for wresp := range watchCh {
+				if wresp.Canceled {
+					if err := wresp.Err(); err != nil && ctx.Err() == nil {
+						log.Printf("[Registry] etcd watch canceled for area %s: %v", area, err)
+					}
+					break
+				}
+				// Ignore load balancer registrations under registry/<area>/__lb.
+				relevant := false
+				for _, ev := range wresp.Events {
+					if !strings.HasPrefix(string(ev.Kv.Key), lbPrefix) {
+						relevant = true
+						break
+					}
+				}
+				if relevant {
+					// Non-blocking send: if a notification is already queued, no need to queue another.
+					select {
+					case events <- struct{}{}:
+					default:
+					}
+				}
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			// Brief backoff before reconnecting to avoid a tight retry loop on etcd outage.
+			select {
+			case <-time.After(1 * time.Second):
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	return events, nil
 }
 
 func StartMonitoring() error {

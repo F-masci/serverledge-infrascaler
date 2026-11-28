@@ -27,6 +27,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/hexablock/vivaldi"
 	"github.com/labstack/echo/v4"
 	"github.com/mikoim/go-loadavg"
 	"github.com/serverledge-faas/serverledge/internal/scheduling"
@@ -55,6 +56,23 @@ func GetFunctions(c echo.Context) error {
 
 // InvokeFunction handles a function invocation request.
 func InvokeFunction(c echo.Context) error {
+
+	if !node.TryAcquireRequest() {
+		return c.String(http.StatusServiceUnavailable, "Node is draining")
+	}
+
+	// Tracks whether ownership of node.ReleaseRequest() has been transferred to an
+	// async execution goroutine. For synchronous calls and any early return/panic,
+	// released stays false so this defer releases the in-flight slot. For async
+	// invocations, released is set to true before spawning the goroutine, which
+	// calls ReleaseRequest() once background execution actually completes.
+	released := false
+	defer func() {
+		if !released {
+			node.ReleaseRequest()
+		}
+	}()
+
 	funcName := c.Param("fun")
 	fun, ok := function.GetFunction(funcName)
 	if !ok {
@@ -117,7 +135,11 @@ func InvokeFunction(c echo.Context) error {
 		// The handler returns its pooled object before asynchronous execution ends.
 		// Give the worker a separate value; this also preserves the original request ID.
 		asyncRequest := *r
-		go scheduling.SubmitAsyncRequest(&asyncRequest)
+		released = true
+		go func(req *function.Request) {
+			defer node.ReleaseRequest()
+			scheduling.SubmitAsyncRequest(req)
+		}(&asyncRequest)
 		setMetricsHeaders()
 		return c.JSON(http.StatusOK, function.AsyncResponse{ReqId: r.Id()})
 	}
@@ -323,7 +345,15 @@ func GetServerStatus(c echo.Context) error {
 	// With this order of execution, we are sure that the lock is never taken recursively, avoiding said deadlock.
 
 	warmStatus := node.WarmStatus()
-	coords := *registration.VivaldiClient.GetCoordinate()
+
+	// VivaldiClient is only initialized by registration.StartMonitoring().
+	// Guard against nil to avoid a nil-pointer panic if /status is queried
+	// before monitoring starts or in isolated unit tests (falling back to
+	// the zero-value coordinate).
+	var coords vivaldi.Coordinate
+	if registration.VivaldiClient != nil {
+		coords = *registration.VivaldiClient.GetCoordinate()
+	}
 
 	loadAvg, err := loadavg.Parse()
 	loadAvgValues := []float64{-1.0, -1.0, -1.0}
@@ -339,6 +369,9 @@ func GetServerStatus(c echo.Context) error {
 	usedCPU := node.LocalResources.UsedCPUs()
 	node.LocalResources.RUnlock()
 
+	draining := node.IsDraining()
+	inFlight := node.InFlightRequests()
+
 	// TODO: use a different type
 	response := registration.StatusInformation{
 		AvailableWarmContainers: warmStatus,
@@ -350,7 +383,9 @@ func GetServerStatus(c echo.Context) error {
 		Coordinates:             coords,
 		LoadAvg:                 loadAvgValues,
 		LastUpdateTime:          time.Now().Unix(),
-		AcceptsOffload:          config.GetString(config.SCHEDULING_POLICY, "default") != "cloudonly",
+		AcceptsOffload:          config.CanAcceptOffload(),
+		Draining:                draining,
+		InFlightRequests:        inFlight,
 	}
 
 	return c.JSON(http.StatusOK, response)
@@ -358,6 +393,10 @@ func GetServerStatus(c echo.Context) error {
 
 // PrewarmFunction handles a prewarming request.
 func PrewarmFunction(c echo.Context) error {
+	if node.IsDraining() {
+		return c.String(http.StatusServiceUnavailable, "Node is draining")
+	}
+
 	var req client.PrewarmingRequest
 	err := json.NewDecoder(c.Request().Body).Decode(&req)
 	if err != nil && err != io.EOF {

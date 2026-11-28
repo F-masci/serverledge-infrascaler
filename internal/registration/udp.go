@@ -73,8 +73,6 @@ func getCurrentStatusInformation() (status []byte, err error) {
 	usedCPU := node.LocalResources.UsedCPUs()
 	node.LocalResources.RUnlock()
 
-	acceptsOffload := config.GetString(config.SCHEDULING_POLICY, "default") != "cloudonly"
-
 	response := StatusInformation{
 		AvailableWarmContainers: node.WarmStatus(),
 		TotalMemory:             totalMem,
@@ -83,7 +81,9 @@ func getCurrentStatusInformation() (status []byte, err error) {
 		FreeMemory:              freeMem,
 		UsedCPU:                 usedCPU,
 		Coordinates:             *VivaldiClient.GetCoordinate(),
-		AcceptsOffload:          acceptsOffload,
+		AcceptsOffload:          config.CanAcceptOffload(),
+		Draining:                node.IsDraining(),
+		InFlightRequests:        node.InFlightRequests(),
 	}
 
 	return json.Marshal(response)

@@ -225,9 +225,14 @@ func InvokeWorkflow(e echo.Context) error {
 }
 
 func handleWorkflowInvocation(e echo.Context, req *workflow.Request) error {
+	if !node.TryAcquireRequest() {
+		workflowInvocationRequestPool.Put(req)
+		return e.String(http.StatusServiceUnavailable, "Node is draining")
+	}
 
 	if req.Async {
 		go func() {
+			defer node.ReleaseRequest()
 			errInvoke := req.W.Invoke(req)
 
 			defer workflowInvocationRequestPool.Put(req)
@@ -252,6 +257,7 @@ func handleWorkflowInvocation(e echo.Context, req *workflow.Request) error {
 	}
 
 	// Synchronous execution of the workflow
+	defer node.ReleaseRequest()
 	err := req.W.Invoke(req)
 
 	defer workflowInvocationRequestPool.Put(req)
